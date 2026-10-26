@@ -1,0 +1,11 @@
+data
+.git
+.qa
+node_modules
+test
+*.log
+.env
+releases
+esphome/secrets.yaml
+esphome/.esphome
+**/__pycache__

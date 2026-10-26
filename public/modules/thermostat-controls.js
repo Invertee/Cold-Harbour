@@ -1,0 +1,19 @@
+import {api,dialog,esc,fixed,pill,select,toast} from '../ui.js';
+
+export function thermostatMarkup(status){
+ return `<h2>Smart Thermostat</h2><form id="thermostat-control-form">${select('Operation','mode',[['planning','Planning · monitor and calculate'],['active','Active · control boiler and radiators']],status.mode)}<p><strong>Planning:</strong> calculate targets while Local PID controls the boiler. Radiators keep their settings.</p><p><strong>Active:</strong> coordinate radiator openings and boiler flow. Select Cold Harbour on the ESP too.</p><details class="advanced"><summary>Control details & fallback</summary><p class="field-help">TRVZB valves use Manual/Heat with Adaptive mode off. Opening is initially proportional to room shortfall: 50% per 1°C, rounded to 5% steps, minimum 10% when heat is needed. Closing degree stays at 100% so the valve can close when its internal thermostat is satisfied. While heating, the device target is raised above the room target within a maximum 5°C allowance and the valve’s own limits. This actuator target is separate from the intended room temperature. External temperature inputs are left unchanged; only enable them if another automation keeps them fresh. Forecast preparation times remain advisory; Active follows the currently scheduled room targets.</p><p class="field-help">The ESP keeps its frost/fault limits and minimum off interval. Commands expire after 90 seconds without renewal, returning the boiler to Local PID. There is no automatic TRV reset on fallback. Mechanical radiators share boiler heat. Requested valve travel is not measured water flow.</p></details><div class="form-actions"><button class="button" type="submit">Save operating mode</button></div><p class="form-error" role="alert"></p></form><h3>${status.active?'Active readiness':'Readiness for Active'}</h3><p role="status">${esc(status.reason)}</p><ul class="commissioning-checks">${status.checks.map(c=>`<li>${pill(c.ok?'Ready':'Waiting',c.ok?'green':'amber')}<div><strong>${esc(c.label)}</strong><small>${esc(c.detail)}</small></div></li>`).join('')}</ul>${status.valves.length?`<h3>Radiator settings</h3><p class="field-help">Enable Valve opening degree and Valve closing degree in the TRV’s disabled ZHA entities. Keep the Adaptive mode switch available. Controls are discovered from the same ZHA device as its mapped thermostat.</p><div class="table-scroll"><table><thead><tr><th>Radiator</th><th>Room target</th><th>Requested opening</th><th>Device target</th><th>Status</th></tr></thead><tbody>${status.valves.map(v=>`<tr><td>${esc(v.entityId)}</td><td>${fixed(v.roomTarget)}°C</td><td>${v.opening}%</td><td>${fixed(v.deviceTarget)}°C</td><td>${esc(v.error || v.detail)}${v.reportedOpening!==null?`<small>Opening setting reported: ${v.reportedOpening}%</small>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<p>No smart radiators mapped. The app can manage boiler demand; radiators retain their mechanical settings.</p>'}`;
+}
+export function bindThermostat(ctx){
+ const button=document.querySelector('#edit-thermostat');if(!button)return;
+ button.onclick=async()=>{
+  try{
+   const status=await api('heating/control'),editor=dialog(thermostatMarkup(status));
+   const form=document.querySelector('#thermostat-control-form');
+   form.onsubmit=async event=>{
+    event.preventDefault();const submit=form.querySelector('button[type="submit"]');submit.disabled=true;
+    try{const result=await api('heating/control',{method:'POST',body:JSON.stringify({mode:form.elements.mode.value})});editor.close();await ctx.reload();toast(result.mode==='planning'?'Planning selected. Boiler release happens on the next exchange.':'Active selected. See readiness and reported controller state.');}
+    catch(error){form.querySelector('.form-error').textContent=error.message;submit.disabled=false;}
+   };
+  }catch(error){toast(error.message,true);}
+ };
+}

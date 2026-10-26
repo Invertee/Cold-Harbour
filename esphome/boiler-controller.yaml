@@ -1,0 +1,358 @@
+# ESPHome 2026.10.0. Keep your existing device name and API/OTA credentials.
+# Wi-Fi is enabled for now. GPIO0 is reserved for future Ethernet; LEDs stay off.
+substitutions:
+  device_name: boiler-controller
+  friendly_name: Boiler Controller
+  ha_average_entity: sensor.average_house_temperature
+  dallas_offset: "-5.0"
+  min_flow: "35"
+  max_flow: "52"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.10.0
+  on_shutdown:
+    priority: 700
+    then:
+      - output.set_level:
+          id: boiler_flow
+          level: 0%
+
+esp32:
+  board: esp32dev
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+api:
+  id: ha_api
+  encryption:
+    key: !secret boiler_api_key
+  reboot_timeout: 0s
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+ota:
+  - platform: esphome
+    password: !secret boiler_ota_password
+    on_begin:
+      then:
+        - lambda: id(boiler_controller).set_ota_in_progress(true);
+    on_error:
+      then:
+        - lambda: id(boiler_controller).set_ota_in_progress(false);
+
+wifi:
+  ssid: !secret boiler_wifi_ssid
+  password: !secret boiler_wifi_password
+  reboot_timeout: 0s
+  power_save_mode: none
+
+# Future Ethernet: comment out the entire wifi block above before enabling this.
+# T-ETH-Lite ESP32 / RTL8201. Disconnect the old LED data lead from GPIO0 first.
+# ethernet:
+#   type: RTL8201
+#   mdc_pin: GPIO23
+#   mdio_pin: GPIO18
+#   clk:
+#     pin: GPIO0
+#     mode: CLK_EXT_IN
+#   phy_addr: 0
+#   power_pin: GPIO12
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [cold_harbour]
+
+cold_harbour:
+  id: boiler_controller
+  flow_output: boiler_flow
+  pid_climate: pid_climate
+  local_temperature: thermostat_unit_temp
+  ha_temperature: ha_average_temp
+  boiler_temperature: water_temp
+  api_id: ha_api
+  device_id: ${device_name}
+  # Address and pairing key are configured at runtime through the text entities below.
+  min_flow: ${min_flow}
+  max_flow: ${max_flow}
+  ha_stale_after: 10min
+  update_interval: 1s
+
+packages:
+  local_panel: !include panel.yaml
+  runtime_connection: !include runtime-connection.yaml
+  # Enable only after moving the status LED data lead from GPIO0 to GPIO4:
+  # status_led: !include status-led-gpio4.yaml
+
+select:
+  - platform: template
+    id: control_mode
+    name: Heating Control Mode
+    optimistic: true
+    restore_value: true
+    initial_option: PID
+    options:
+      - PID
+      - Cold Harbour
+    on_value:
+      then:
+        - lambda: id(boiler_controller).set_remote_mode(x == "Cold Harbour");
+
+switch:
+  - platform: template
+    id: comfort_heating
+    name: Central Heating Enabled
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(boiler_controller).set_comfort_enabled(true);
+    turn_off_action:
+      - lambda: id(boiler_controller).set_comfort_enabled(false);
+  - platform: opentherm
+    dhw_enable:
+      id: dhw_enable
+      name: Hot Water Enabled
+      restore_mode: RESTORE_DEFAULT_ON
+
+# One output authority. PID requests are buffered; only cold_harbour writes t_set.
+opentherm:
+  id: ot_hub
+  in_pin: GPIO15
+  out_pin: GPIO02
+  ch_enable: true
+  otc_active: false
+  sync_mode: false
+  # The Cold Harbour component automatically attaches passive capture callbacks.
+
+output:
+  - platform: template
+    id: pid_request
+    type: float
+    write_action:
+      - lambda: id(boiler_controller).set_pid_level(state);
+  - platform: opentherm
+    t_set:
+      id: boiler_flow
+      min_value: 0
+      max_value: 100
+      zero_means_zero: true
+
+one_wire:
+  - platform: gpio
+    pin: GPIO05
+
+sensor:
+  - platform: dallas_temp
+    id: thermostat_unit_temp
+    name: Wall Unit Temperature
+    update_interval: 30s
+    filters:
+      - offset: ${dallas_offset}
+  - platform: homeassistant
+    id: ha_average_temp
+    entity_id: ${ha_average_entity}
+    internal: true
+    # Deliberately no heartbeat here: repeated cached values must not renew freshness.
+  - platform: template
+    id: house_temperature
+    name: PID Temperature Input
+    device_class: temperature
+    state_class: measurement
+    unit_of_measurement: °C
+    accuracy_decimals: 2
+    update_interval: 5s
+    lambda: return id(boiler_controller).pid_temperature();
+  - platform: opentherm
+    t_boiler:
+      id: water_temp
+      name: Boiler Primary Water Temperature
+    t_ret:
+      id: return_water_temp
+      name: Boiler Return Water Temperature
+      on_value:
+        - lambda: id(boiler_controller).set_metric("return_c", x);
+    rel_mod_level:
+      id: modulation_level
+      name: Boiler Relative Modulation Level
+      on_value:
+        - lambda: id(boiler_controller).set_metric("modulation_pct", x);
+    # CH pressure omitted: this boiler appears to return an unchanging placeholder.
+    burner_starts:
+      id: number_of_starts
+      name: Number of Burner Starts
+      on_value:
+        - lambda: id(boiler_controller).set_metric("burner_starts", x);
+    burner_operation_hours:
+      id: burner_hours
+      name: Burner Operation Hours
+      on_value:
+        - lambda: id(boiler_controller).set_metric("burner_hours", x);
+    dhw_flow_rate:
+      id: flow_rate
+      name: Hot Water Flow Rate
+      on_value:
+        - lambda: id(boiler_controller).set_metric("dhw_flow_l_min", x);
+    t_dhw:
+      name: Domestic Hot Water Temperature
+      on_value:
+        - lambda: id(boiler_controller).set_metric("dhw_temperature_c", x);
+    # Read-only diagnostic. No t_dhw_set output/number and no max_t_set override.
+    t_dhw_set:
+      name: Domestic Hot Water Setpoint Readback
+      on_value:
+        - lambda: id(boiler_controller).set_metric("dhw_setpoint_c", x);
+  - platform: pid
+    id: modulation_requested
+    name: PID Heat Output Requested
+    type: HEAT
+  - platform: pid
+    name: PID Proportional Term
+    type: PROPORTIONAL
+  - platform: pid
+    name: PID Integral Term
+    type: INTEGRAL
+  - platform: template
+    id: requested_flow
+    name: Requested Heating Flow Temperature
+    unit_of_measurement: °C
+    device_class: temperature
+    accuracy_decimals: 1
+    update_interval: 10s
+    lambda: return id(boiler_controller).requested_flow();
+  - platform: template
+    name: Cold Harbour Command Lease Remaining
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: return id(boiler_controller).lease_remaining();
+  - platform: template
+    name: Cold Harbour Exchange Age
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: return id(boiler_controller).exchange_age();
+  - platform: template
+    name: Cold Harbour Exchange Failures
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: return id(boiler_controller).exchange_failures();
+  - platform: template
+    name: OpenTherm Reading Age
+    unit_of_measurement: s
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 10s
+    lambda: return id(boiler_controller).opentherm_age();
+  - platform: uptime
+    name: Uptime
+    type: seconds
+
+binary_sensor:
+  - platform: opentherm
+    ch_active:
+      id: heating_active
+      name: Boiler Central Heating Active
+    dhw_active:
+      id: hot_water_active
+      name: Boiler Hot Water Active
+    flame_on:
+      id: flame_on
+      name: Boiler Flame On
+    fault_indication:
+      id: boiler_fault
+      name: Boiler Fault
+      entity_category: diagnostic
+      on_state:
+        - lambda: id(boiler_controller).set_fault(x);
+    diagnostic_indication:
+      name: Boiler Diagnostic Event
+      entity_category: diagnostic
+  - platform: template
+    name: Cold Harbour Controlling
+    lambda: return id(boiler_controller).remote_active();
+  - platform: template
+    name: Local Frost Protection Active
+    lambda: return id(boiler_controller).frost_active();
+  - platform: template
+    id: emergency_mode
+    name: Local Temperature Fallback
+    lambda: return id(boiler_controller).temperature_source() == "Local Dallas probe";
+
+text_sensor:
+  - platform: template
+    id: effective_mode
+    name: Effective Heating Controller
+    update_interval: 5s
+    lambda: return id(boiler_controller).effective_mode();
+  - platform: template
+    name: PID Temperature Source
+    update_interval: 5s
+    lambda: return id(boiler_controller).temperature_source();
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          id(boiler_controller).set_flags(id(flame_on).state, id(heating_active).state, id(hot_water_active).state);
+          // Synchronise restored UI settings as well as runtime changes.
+          id(boiler_controller).set_remote_mode(id(control_mode).current_option() == "Cold Harbour");
+          id(boiler_controller).set_comfort_enabled(id(comfort_heating).state);
+
+climate:
+  - platform: pid
+    id: pid_climate
+    name: Central Heating
+    sensor: house_temperature
+    heat_output: pid_request
+    default_target_temperature: 18.5
+    visual:
+      min_temperature: 12
+      max_temperature: 24
+      temperature_step:
+        target_temperature: 0.5
+        current_temperature: 0.1
+    control_parameters:
+      kp: 0.5
+      ki: 0.01
+      kd: 0
+      min_integral: 0
+      max_integral: 1.0
+      output_averaging_samples: 3
+    deadband_parameters:
+      threshold_high: 0.2°C
+      threshold_low: -0.2°C
+      kp_multiplier: 0
+      ki_multiplier: 0.05
+      kd_multiplier: 0
+
+number:
+  - platform: template
+    id: heating_setpoint
+    name: PID Heating Target Temperature
+    min_value: 12
+    max_value: 24
+    step: 0.5
+    update_interval: 5s
+    lambda: return id(pid_climate).target_temperature;
+    set_action:
+      - climate.control:
+          id: pid_climate
+          target_temperature: !lambda return x;
+
+button:
+  - platform: template
+    name: Reset PID Integral
+    on_press:
+      - climate.pid.reset_integral_term: pid_climate
+  - platform: restart
+    name: Thermostat Restart

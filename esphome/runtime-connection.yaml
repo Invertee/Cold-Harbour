@@ -1,0 +1,32 @@
+# Runtime connection controls. Keep this next to the main boiler YAML.
+text:
+  - platform: cold_harbour
+    cold_harbour_id: boiler_controller
+    server_url:
+      name: Cold Harbour Server URL
+    pairing_key:
+      name: Cold Harbour Pairing Key
+
+switch:
+  - platform: template
+    name: OpenTherm Message Capture
+    entity_category: diagnostic
+    restore_mode: ALWAYS_OFF
+    lambda: return id(boiler_controller).frame_capture_active();
+    turn_on_action:
+      - lambda: id(boiler_controller).set_frame_capture(true);
+    turn_off_action:
+      - lambda: id(boiler_controller).set_frame_capture(false);
+
+binary_sensor:
+  - platform: template
+    name: Cold Harbour Pairing Key Configured
+    entity_category: diagnostic
+    lambda: return id(boiler_controller).pairing_key_configured();
+
+text_sensor:
+  - platform: template
+    name: Cold Harbour Connection Setup
+    entity_category: diagnostic
+    update_interval: 2s
+    lambda: return id(boiler_controller).connection_setup_status();

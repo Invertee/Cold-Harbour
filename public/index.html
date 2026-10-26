@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#202a37">
+  <meta name="description" content="Cold Harbour. Home energy, heating and room priorities.">
+  <title>Cold Harbour · Home</title>
+  <link rel="icon" href="./mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./charts.css">
+  <link rel="stylesheet" href="./heating.css">
+  <link rel="stylesheet" href="./boiler.css">
+  <link rel="stylesheet" href="./settings.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <aside class="sidebar">
+    <a class="brand" href="#boiler" aria-label="Cold Harbour home"><img src="./mark.svg" alt="" width="35" height="35"><span>Cold Harbour</span></a>
+    <nav id="navigation" aria-label="Main navigation"></nav>
+    <div class="sidebar-bottom"><div class="system-line"><span class="status-dot"></span><span id="system-status">Connecting…</span></div></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><span id="breadcrumb-current" class="current-page">Energy</span><div class="topbar-right"><time id="today"></time><span class="pill" id="mode-pill">Connecting</span><button class="icon-button" id="refresh" aria-label="Refresh readings" title="Refresh readings"></button></div></header>
+    <main id="main" tabindex="-1"><div class="loading">Loading…</div></main>
+  </div>
+  <dialog id="editor"><form method="dialog" class="dialog-top"><button class="icon-button" aria-label="Close dialog">✕</button></form><div id="dialog-content"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

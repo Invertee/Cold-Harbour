@@ -1,0 +1,11 @@
+services:
+  cold-harbour:
+    build: .
+    ports:
+      - "127.0.0.1:8099:8099"
+      - "8102:8102"
+    volumes:
+      - mods-data:/data
+    restart: unless-stopped
+volumes:
+  mods-data:

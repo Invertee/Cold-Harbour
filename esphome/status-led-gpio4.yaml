@@ -1,0 +1,10 @@
+# OPTIONAL: first physically move LED data from GPIO0 to GPIO4.
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_light
+    name: Status Light
+    pin: GPIO4
+    num_leds: 8
+    chipset: WS2812
+    rgb_order: GRB
+    restore_mode: ALWAYS_OFF

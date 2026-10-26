@@ -1,0 +1,94 @@
+# Existing LCD/encoder wiring, with fewer and clearer pages.
+i2c:
+  id: displaybus
+  sda: GPIO13
+  scl: GPIO32
+  scan: true
+  frequency: 50kHz
+
+globals:
+  - id: page
+    type: int
+    initial_value: "1"
+  - id: edit_mode
+    type: bool
+    initial_value: "false"
+
+display:
+  - platform: lcd_pcf8574
+    id: ldisplay
+    dimensions: 15x2
+    address: 0x27
+    i2c_id: displaybus
+    update_interval: 1s
+    lambda: |-
+      switch (id(page)) {
+        case 1:
+          it.print(0, 0, "PID target/temp");
+          it.printf(0, 1, "%.1f / %.1f C", id(pid_climate).target_temperature, id(house_temperature).state);
+          break;
+        case 2:
+          it.print(0, 0, "Selected mode");
+          it.print(0, 1, id(control_mode).current_option().c_str());
+          break;
+        case 3:
+          it.print(0, 0, "Central Heating");
+          it.print(0, 1, id(comfort_heating).state ? "Enabled" : "Paused (frost)");
+          break;
+        case 4:
+          it.print(0, 0, "Flow / Return");
+          it.printf(0, 1, "%.1f / %.1f C", id(water_temp).state, id(return_water_temp).state);
+          break;
+        case 5:
+          it.print(0, 0, "Flow requested");
+          it.printf(0, 1, "%.1f C", id(boiler_controller).requested_flow());
+          break;
+        case 6:
+          it.print(0, 0, "Remote lease");
+          it.printf(0, 1, "%.0f seconds", id(boiler_controller).lease_remaining());
+          break;
+      }
+      if (id(edit_mode)) it.print(14, 0, "*");
+
+sensor:
+  - platform: rotary_encoder
+    id: encoder
+    pin_a: GPIO14
+    pin_b: GPIO34
+    on_clockwise:
+      - lambda: |-
+          if (!id(edit_mode)) { id(page) = id(page) % 6 + 1; return; }
+          if (id(page) == 1) {
+            auto call = id(pid_climate).make_call();
+            call.set_target_temperature(std::min(24.0f, id(pid_climate).target_temperature + 0.5f));
+            call.perform();
+          } else if (id(page) == 2) {
+            auto call = id(control_mode).make_call();
+            call.set_option(id(control_mode).current_option() == "PID" ? "Cold Harbour" : "PID"); call.perform();
+          } else if (id(page) == 3) {
+            id(comfort_heating).toggle();
+          }
+    on_anticlockwise:
+      - lambda: |-
+          if (!id(edit_mode)) { id(page) = id(page) == 1 ? 6 : id(page) - 1; return; }
+          if (id(page) == 1) {
+            auto call = id(pid_climate).make_call();
+            call.set_target_temperature(std::max(12.0f, id(pid_climate).target_temperature - 0.5f));
+            call.perform();
+          } else if (id(page) == 2) {
+            auto call = id(control_mode).make_call();
+            call.set_option(id(control_mode).current_option() == "PID" ? "Cold Harbour" : "PID"); call.perform();
+          } else if (id(page) == 3) {
+            id(comfort_heating).toggle();
+          }
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO33
+      mode: INPUT_PULLUP
+      inverted: true
+    name: Encoder Button
+    internal: true
+    on_press:
+      - lambda: id(edit_mode) = !id(edit_mode);
