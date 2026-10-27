@@ -1,6 +1,6 @@
 import { temperature,temperatureReport } from '../integrations/home-assistant.js';
 import { localParts } from '../time.js';
-import {resolveHeatingPlan,scheduledRoomTarget} from '../heating-plan.js';
+import {resolveHeatingPlan,scheduledRoomTarget,temporaryHouseSetpoint} from '../heating-plan.js';
 import {createHeatingHistory} from './heating-history.js';
 import {createRadiatorControl} from './radiators.js';
 import {HttpError} from '../http.js';
@@ -63,7 +63,7 @@ export function evaluateHeating({rooms,rules,states,config,now=Date.now(),presen
     const planned=plan?Math.max(5,Math.min(28,plan.baseTarget+offset+plan.profile.offset+(matching?.offset || 0))):null;
     const presenceSetback=presenceControlsTarget&&!away&&!occupied&&!presence.unknown&&matching?.presenceSetback!==false;
     const priority = scheduled?(matching?.priority==='high'?'high':'low'):plan?Math.max(matching?.priority || 1,occupied&&!away?3:1):away ? 1 : Math.max(matching?.priority || 1,occupied?3:1);
-    const target = scheduled?scheduledRoomTarget(room,priority,config.heatingPlan,plan.profile):plan?presenceSetback?Math.min(planned,room.eco):planned:away ? room.eco : matching?.target ?? baseTarget;
+    const target = scheduled?scheduledRoomTarget(room,priority,config.heatingPlan,{...plan.profile,houseTarget:plan.activeTarget}):plan?presenceSetback?Math.min(planned,room.eco):planned:away ? room.eco : matching?.target ?? baseTarget;
     const reason = scheduled?`${plan.override?`${plan.profile.name} · sensor override`:`${plan.occupancy.effective==='away'?'Away':'Home'} schedule`} · ${priority==='high'?'comfort':'low temperature'}${priority==='high'?' target':''}`:plan?`${plan.profile.name}${presenceSetback?' · room Eco setback':occupied?' · room in use':''}`:away ? 'Away setback' : matching?.name || (occupied ? presence.held ? 'Recent presence' : 'Room in use' : presenceControlsTarget && presence.unknown && activity!=='sleep' ? 'Presence unavailable · comfort retained' : presenceControlsTarget ? 'No presence · Eco target' : activity==='sleep' ? 'Sleep setback' : 'Base comfort');
     const deficit = current === null ? null : target-current;
     const demandKey=JSON.stringify([target,selectedEntities,priority]),previousDemand=demandMemory.get(room.id);
@@ -101,13 +101,22 @@ export const heatingModule = {
     context.heatingOutlook=createHeatingOutlook(context,now=>heatingSummary(context,now));
     context.radiators=createRadiatorControl(context,now=>heatingSummary(context,now));
     context.thermostat=createThermostat(context,now=>heatingSummary(context,now));
+    route('POST','/api/heating/setpoint',({body})=>{
+      if(!body||Object.keys(body).some(k=>k!=='target')||typeof body.target!=='number'||!Number.isFinite(body.target)||body.target<7||body.target>28)throw new HttpError(400,'Choose a house setpoint between 7 and 28°C.');
+      const now=Date.now(),config=context.store.config(),data=heatingSummary(context,now,config);
+      if(config.heatingPlan.version!==2)throw new HttpError(400,'Temporary setpoints need a scheduled heating plan.');
+      const setpointOverride=temporaryHouseSetpoint(config.heatingPlan,data.plan,body.target,now,config.general.timezone);
+      context.store.save('heatingPlan',{...config.heatingPlan,setpointOverride});
+      return heatingSummary(context,now);
+    });
     route('GET','/api/heating/control',()=>context.thermostat.status());
     route('POST','/api/heating/control',({body})=>{if(!body||Object.keys(body).some(k=>k!=='mode'))throw new HttpError(400,'Choose only the thermostat mode.');return context.thermostat.setMode(body.mode);});
     route('GET','/api/heating',()=>{
       const data=heatingSummary(context),control=context.thermostat.status();
+      const trends=context.heatingHistory.trends(data.rooms);
       return {...data,outlook:context.heatingOutlook.read().summary,control,
        valveControlEnabled:control.active?control.ready:data.plan?.settings.version!==2&&data.rooms.some(room=>room.radiatorEntity&&room.radiatorMode&&room.radiatorMode!=='monitor'),
-       rooms:data.rooms.map(room=>({...room,radiatorControl:room.radiator?context.radiators.status(room.id):null,valvePlan:room.radiator?valvePlan(room):null})),
+       rooms:data.rooms.map(room=>({...room,trend:trends[room.id],radiatorControl:room.radiator?context.radiators.status(room.id):null,valvePlan:room.radiator?valvePlan(room):null})),
        controller:{message:control.active?control.reason:'Planning only; Local PID controls the boiler and radiator settings stay unchanged.'}};
     });
     route('POST','/api/heating/radiator',({body})=>{if(Object.keys(body).some(k=>!['roomId','mode'].includes(k)))throw new HttpError(400,'Only a room and radiator mode are supported.');return context.radiators.setMode(body.roomId,body.mode);});

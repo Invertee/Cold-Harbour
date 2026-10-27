@@ -2,6 +2,7 @@ import {valvePlan} from './thermostat.js';
 import {HttpError} from '../http.js';
 import {phaseBands} from './boiler-history.js';
 import {weatherLearning} from './heating-learning.js';
+import {roomTemperatureTrends,TREND_WINDOW_MINUTES} from '../temperature-trend.js';
 
 export function warmupInsights(samples,rooms,now=Date.now()){
  const average=values=>values.length?values.reduce((a,b)=>a+b,0)/values.length:null;
@@ -47,12 +48,15 @@ export function createHeatingHistory(context,summary){
  const {store}=context;let cache=null;
  function read(start,end){return store.db.prepare('SELECT at,snapshot FROM heating_samples WHERE at>=? AND at<=? ORDER BY at LIMIT 129600').all(new Date(start).toISOString(),new Date(end).toISOString()).map(row=>({at:row.at,...JSON.parse(row.snapshot)}));}
  return {
+  trends(rooms,now=Date.now()){
+   return roomTemperatureTrends(read(now-TREND_WINDOW_MINUTES*60000,now),rooms,now);
+  },
   capture(now=Date.now()){
    const at=new Date(Math.floor(now/60000)*60000).toISOString();
    if(store.db.prepare('SELECT 1 FROM heating_samples WHERE at=?').get(at))return;
    const data=summary(now),status=context.boiler?.status(now),t=status?.connected?status.telemetry || {}:{};
    const heating=t.heating_sample_valid===true&&t.ch_active===true&&t.dhw_active===false&&t.boiler_fault===false&&t.opentherm_age_s<90;
-   const snapshot={houseTarget:data.plan?.settings.houseTarget ?? null,activeTarget:data.plan?.activeTarget ?? null,activity:data.plan?.profile.name || data.activity,occupancy:data.plan?.occupancy.effective || 'unknown',heating,
+   const snapshot={houseTarget:data.plan?.activeTarget ?? null,activeTarget:data.plan?.scheduledTarget ?? data.plan?.activeTarget ?? null,activity:data.plan?.profile.name || data.activity,occupancy:data.plan?.occupancy.effective || 'unknown',heating,
     boiler:{planned_flow_c:data.smartPlan&&data.smartPlan.kind!=='unavailable'?data.smartPlan.flowC:null,outdoor_c:data.smartPlan?.weather.outdoor?.temperature ?? null,outdoor_at:data.smartPlan?.weather.outdoor?.at || null,outdoor_entity:data.smartPlan?.weather.outdoor?.entityId || null,outdoor_kind:data.smartPlan?.weather.outdoor?'reported':null,flow_c:t.heating_sample_valid===true?(t.ch_flow_c ?? t.flow_c ?? null):null,return_c:t.heating_sample_valid===true?(t.ch_return_c ?? t.return_c ?? null):null,weather_status:data.smartPlan?.weather.status || null,planned_reason:data.smartPlan?.reason || null,requested_flow_c:t.requested_flow_c ?? null,modulation_pct:t.modulation_pct ?? null,pid_output_pct:Number.isFinite(t.pid_output)?t.pid_output*100:null,pid_target_c:t.pid_target_c ?? null,pid_temperature_c:t.pid_temperature_c ?? null,thermal_context:t.opentherm_age_s<90?t.thermal_context || 'unknown':'unknown'},
     rooms:data.rooms.map(({id,current,target,priority,sourceAt,sensorFingerprint,radiator,radiatorMode,...room})=>({id,current,target,priority,sourceAt,sensorFingerprint,...(radiator?{radiatorEntity:radiator.entityId,radiatorMode:radiatorMode || 'monitor',radiatorTarget:radiator.currentTarget,plannedOpening:valvePlan({...room,id,current,target,priority,radiator}).opening,radiatorReportedOpening:context.ha?.valveContext?.(radiator.entityId,now)?.opening?.value ?? null,radiatorPaused:context.ha?.valveContext?.(radiator.entityId,now)?.opening?.value===0||radiator.mode==='off'||data.plan?.settings.version!==2&&radiatorMode==='pause'}:{})}))};
    store.db.prepare('INSERT INTO heating_samples VALUES (?,?)').run(at,JSON.stringify(snapshot));

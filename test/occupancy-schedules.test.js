@@ -4,7 +4,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve,basename,sep} from 'node:path';
 import {defaults} from '../server/defaults.js';
-import {groupHeatingSchedules,resolveHeatingPlan,scheduledRoomTarget} from '../server/heating-plan.js';
+import {groupHeatingSchedules,resolveHeatingPlan,scheduledRoomTarget,temporaryHouseSetpoint} from '../server/heating-plan.js';
 import {evaluateHeating} from '../server/modules/heating.js';
 import {buildHeatingOutlook} from '../server/modules/heating-outlook.js';
 import {validateHeatingPlan} from '../server/validate.js';
@@ -109,4 +109,42 @@ test('forecast guidance uses each period setpoint in hourly targets and daily fl
  const outlook=build();assert.equal(outlook.scenarios.home.hourly[0].rooms[0].targetC,18.5);assert.equal(outlook.scenarios.away.hourly[0].rooms[1].targetC,17);
  const higherFlow=outlook.scenarios.away.daily[0].flowHighC;p.activities[2].houseTarget=18;
  assert.ok(build().scenarios.away.daily[0].flowHighC<higherFlow);
+});
+
+
+test('manual setpoint replaces period temperature until the next boundary without changing saved targets',()=>{
+ const c=config(),p=c.heatingPlan;p.activities[0].houseTarget=20;p.houseTarget=19;
+ p.timeline=Array.from({length:7},()=>[{start:0,activityId:'home'},{start:780,activityId:'away_late'}]);p.activities[2].houseTarget=18;
+ const resolved=evaluate(c,[]).plan;assert.equal(resolved.activeTarget,20);
+ p.setpointOverride=temporaryHouseSetpoint(p,resolved,21.5,now,'Europe/London');
+ assert.equal(p.setpointOverride.expiresAt,'2026-10-23T12:00:00.000Z');
+ const saved=validateHeatingPlan(p);assert.deepEqual(saved.setpointOverride,p.setpointOverride);
+ let data=evaluate(c,[]);assert.equal(data.plan.activeTarget,21.5);assert.deepEqual(data.rooms.map(r=>r.target),[21.5,16]);assert.equal(data.plan.scheduledTarget,20);
+ data=evaluate(c,[],Date.parse(p.setpointOverride.expiresAt)-1);assert.equal(data.plan.activeTarget,21.5);
+ data=evaluate(c,[],Date.parse(p.setpointOverride.expiresAt));assert.equal(data.plan.activeTarget,18);assert.equal(data.plan.setpointOverride,undefined);assert.equal(data.rooms[0].target,18);
+ assert.equal(p.houseTarget,19);assert.equal(p.activities[0].houseTarget,20);
+ assert.equal(evaluate(c,[],now+7*86400000).plan.activeTarget,20);
+});
+
+test('temporary setpoints expire at midnight, repeated-profile boundaries and across daylight saving changes',()=>{
+ for(const [at,end,slots] of [
+  ['2026-10-23T22:30:00Z','2026-10-23T23:00:00.000Z',[{start:0,activityId:'home'}]],
+  ['2026-10-23T11:00:00Z','2026-10-23T12:00:00.000Z',[{start:0,activityId:'home'},{start:780,activityId:'home'}]],
+  ['2026-10-25T00:30:00Z','2026-10-25T02:00:00.000Z',[{start:0,activityId:'home'},{start:120,activityId:'home'}]],
+  ['2026-03-29T00:30:00Z','2026-03-29T01:00:00.000Z',[{start:0,activityId:'home'},{start:120,activityId:'home'}]],
+ ]){
+  const c=config(),p=c.heatingPlan;p.timeline=Array.from({length:7},()=>slots);const start=Date.parse(at),resolved=evaluate(c,[],start).plan;
+  p.setpointOverride=temporaryHouseSetpoint(p,resolved,22,start,'Europe/London');assert.equal(p.setpointOverride.expiresAt,end);
+  assert.equal(evaluate(c,[],start).plan.activeTarget,22);assert.equal(evaluate(c,[],Date.parse(end)).plan.activeTarget,20);
+ }
+});
+
+test('temporary setpoint HTTP changes persist across restart and reject invalid requests',async t=>{
+ const directory=mkdtempSync(join(tmpdir(),'cold-occupancy-'));let app=createApplication({dataDir:directory});await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));t.after(async()=>{await app.close();remove(directory);});
+ const base='http://127.0.0.1:'+app.server.address().port,post=body=>fetch(base+'/api/heating/setpoint',{method:'POST',headers:{'Content-Type':'application/json','X-MODS-Request':'1'},body:JSON.stringify(body)});
+ const p=config().heatingPlan;p.houseTarget=19;p.activities[0].houseTarget=20;app.context.store.save('heatingPlan',p);
+ for(const body of [{target:29},{target:6},{target:'21'},{target:21,enabled:true},{}])assert.equal((await post(body)).status,400);
+ const response=await post({target:21.5});assert.equal(response.status,200);const data=await response.json();assert.equal(data.plan.activeTarget,21.5);assert.equal(data.plan.scheduledTarget,20);assert.equal(data.mode,'listen');
+ const saved=app.context.store.config().heatingPlan;assert.equal(saved.houseTarget,19);assert.equal(saved.activities[0].houseTarget,20);assert.equal(saved.setpointOverride.target,21.5);
+ await app.close();app=createApplication({dataDir:directory});assert.deepEqual(app.context.store.config().heatingPlan,saved);
 });

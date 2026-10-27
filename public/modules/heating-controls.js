@@ -16,7 +16,7 @@ export function planningControls(data){
 export async function savePlan(ctx,plan){await api('settings',{method:'POST',body:JSON.stringify({section:'heatingPlan',values:plan})});}
 export function bindPlanning(view,ctx){
  bindThermostat(ctx);
- bindHouseSetpoint(view,ctx,savePlan);
+ bindHouseSetpoint(view,ctx);
  document.querySelector('#edit-schedule').onclick=()=>editSchedule(view,ctx);
  document.querySelector('#edit-household').onclick=()=>editHousehold(view,ctx);
  document.querySelector('#edit-weather').onclick=()=>editWeather(view,ctx);

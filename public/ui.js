@@ -39,8 +39,32 @@ export const pill = (text,kind='')=>`<span class="pill ${kind}"><span class="sta
 export const empty = (title,description,link='')=>`<div class="empty-state"><strong>${title}</strong>${description?`<p>${description}</p>`:''}${link}</div>`;
 export function toast(message,error=false) { const el=document.querySelector('#toast');el.textContent=message;el.className=`visible ${error?'error':''}`;clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.className='',5000); }
 export async function api(path,options={}) {
-  const response=await fetch(new URL(`api/${path}`,new URL('./',location.href)),{...options,headers:{'Content-Type':'application/json','X-MODS-Request':'1',...options.headers}});
-  const result=await response.json();if(!response.ok)throw new Error(result.error || 'Request failed.');return result;
+  const reading=(options.method || 'GET').toUpperCase()==='GET';
+  const temporary=status=>[408,429,500,502,503,504].includes(status);
+  const failure=(message,retryable=false)=>Object.assign(new Error(message),{retryable});
+  for(let attempt=0;attempt<(reading?2:1);attempt++){
+    try{
+      let response;
+      const timeout=AbortSignal.timeout(20000),signal=options.signal?AbortSignal.any([options.signal,timeout]):timeout;
+      try{response=await fetch(new URL(`api/${path}`,new URL('./',location.href)),{...options,signal,headers:{'Content-Type':'application/json','X-MODS-Request':'1',...options.headers}});}
+      catch{
+        if(options.signal?.aborted)throw failure('Request cancelled.');
+        throw failure(reading?'Connection interrupted. Please try again.':'Connection interrupted. Check whether your change was saved before trying again.',true);
+      }
+      let result;
+      try{result=await response.json();if(!result||typeof result!=='object')throw new Error();}
+      catch{
+        if(options.signal?.aborted)throw failure('Request cancelled.');
+        const message=response.status===401||response.status===403?'Access to Cold Harbour has expired or was denied. Reopen it from Home Assistant and try again.':response.ok||temporary(response.status)?'Cold Harbour is temporarily unavailable. Please try again.':`The request could not be completed (HTTP ${response.status}). Please try again.`;
+        throw failure(message,response.ok||temporary(response.status));
+      }
+      if(!response.ok)throw failure(typeof result.error==='string'?result.error:`The request could not be completed (HTTP ${response.status}).`,temporary(response.status));
+      return result;
+    }catch(error){
+      if(!reading||attempt===1||!error.retryable||options.signal?.aborted)throw error;
+      await new Promise(resolve=>setTimeout(resolve,350));
+    }
+  }
 }
 export function dialog(html) {const el=document.querySelector('#editor');document.querySelector('#dialog-content').innerHTML=html;el.showModal();return el;}
 export function fields(form) {return Object.fromEntries(new FormData(form));}

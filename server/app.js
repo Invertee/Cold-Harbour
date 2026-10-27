@@ -12,6 +12,7 @@ import { HttpError,json,readJson } from './http.js';
 import { validateConfig,validateRoom,validateRule,str } from './validate.js';
 import {registerBackups,MAX_BACKUP_BYTES} from './backups.js';
 import {createNotifications} from './integrations/notifications.js';
+import metadata from '../package.json' with {type:'json'};
 
 const publicDir = fileURLToPath(new URL('../public/',import.meta.url));
 const mime = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};
@@ -98,7 +99,7 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
     try {
       const url = new URL(req.url,'http://mods.local');
       const remote = req.socket.remoteAddress?.replace(/^::ffff:/,'');
-      if (req.method === 'GET' && url.pathname === '/health' && ['127.0.0.1','::1','172.30.32.2'].includes(remote)) return json(res,{status:'ok',version:'0.14.1'});
+      if (req.method === 'GET' && url.pathname === '/health' && ['127.0.0.1','::1','172.30.32.2'].includes(remote)) return json(res,{status:'ok',version:metadata.version});
       if (ingressOnly && remote !== '172.30.32.2') throw new HttpError(403,'Access Cold Harbour through Home Assistant ingress.');
       if (req.headers['sec-fetch-site'] === 'cross-site') throw new HttpError(403,'Cross-site requests are not allowed.');
       if (url.pathname.startsWith('/api/')) {

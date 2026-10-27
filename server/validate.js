@@ -99,6 +99,12 @@ export function validateHeatingPlan(input){
   const id=value=>{const text=str(value,'Period ID',80);if(!/^[a-z0-9_-]+$/.test(text))fail('Use a valid period ID.');return text;};
   const plan={houseTarget:num(input.houseTarget,'House target',10,28),awayTarget:num(input.awayTarget,'Away target',5,25),manualActivity:str(input.manualActivity,'Selected period',80),occupancyMode:input.occupancyMode,awayDelayMinutes:num(input.awayDelayMinutes,'Away delay',0,120)};
   plan.version=input.version ?? 1;if(![1,2].includes(plan.version))fail('Choose a supported schedule version.');
+  plan.setpointOverride=null;
+  if(input.setpointOverride!=null){
+    const hold=input.setpointOverride;
+    if(plan.version!==2||!object(hold)||typeof hold.startedAt!=='string'||typeof hold.expiresAt!=='string'||!Number.isFinite(Date.parse(hold.startedAt))||!Number.isFinite(Date.parse(hold.expiresAt))||Date.parse(hold.expiresAt)<=Date.parse(hold.startedAt)||Date.parse(hold.expiresAt)-Date.parse(hold.startedAt)>26*3600000)fail('Choose a valid temporary setpoint period.');
+    plan.setpointOverride={target:num(hold.target,'Temporary setpoint',7,28),periodKey:str(hold.periodKey,'Temporary setpoint period',512),startedAt:hold.startedAt,expiresAt:hold.expiresAt};
+  }
   if(plan.version===2&&plan.manualActivity!=='auto')fail('Room priorities follow the schedule.');
   if(plan.version===2&&plan.awayTarget>plan.houseTarget)fail('Low temperature must not exceed the house setpoint.');
   if(input.weather!==undefined&&!object(input.weather))fail('Choose valid weather planning settings.');

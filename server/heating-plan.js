@@ -1,7 +1,7 @@
 import {localParts} from './time.js';
 import {defaultWeatherPlan} from './smart-thermostat.js';
 
-export const defaultHeatingPlan={version:2,weather:defaultWeatherPlan,houseTarget:20,awayTarget:16,scheduleOverride:null,manualActivity:'auto',occupancyMode:'auto',people:[],awayDelayMinutes:10,activities:[
+export const defaultHeatingPlan={version:2,weather:defaultWeatherPlan,houseTarget:20,awayTarget:16,scheduleOverride:null,setpointOverride:null,manualActivity:'auto',occupancyMode:'auto',people:[],awayDelayMinutes:10,activities:[
  {id:'home',name:'At home',targetMode:'house',offset:0,rooms:{}},
  {id:'work',name:'Working',targetMode:'house',offset:0,rooms:{}},
  {id:'evening',name:'Unwinding',targetMode:'house',offset:0,rooms:{}},
@@ -81,6 +81,19 @@ export function resolveHeatingPlan(plan,states,now,timezone,memory={}){
  const automatic=plan.version===2||plan.manualActivity==='auto';
  const override=plan.version===2&&plan.scheduleOverride&&states.some(s=>s.entity_id===plan.scheduleOverride.entityId&&s.state==='on')?plan.scheduleOverride:null;
  const slot=[...slots].reverse().find(s=>s.start<=at),profile=plan.activities.find(p=>p.id===(override?.activityId ?? (automatic?slot.activityId:plan.manualActivity))) || plan.activities[0];
- const baseTarget=plan.version===2?(profile.houseTarget ?? plan.houseTarget):profile.targetMode==='setback'?plan.awayTarget:plan.houseTarget;
- return {profile,occupancy,day,minute:at,slot,baseTarget,activeTarget:Math.max(5,Math.min(28,baseTarget+(plan.version===2?0:profile.offset))),automatic,...(override?{override}:{})};
+ const periodKey=JSON.stringify([`${parts.year}-${parts.month}-${parts.day}`,occupancy.effective,slot.start,profile.id,override?.entityId || null]);
+ const manual=plan.version===2&&plan.setpointOverride?.periodKey===periodKey&&now>=Date.parse(plan.setpointOverride.startedAt)&&now<Date.parse(plan.setpointOverride.expiresAt)?plan.setpointOverride:null;
+ const scheduledTarget=plan.version===2?(profile.houseTarget ?? plan.houseTarget):profile.targetMode==='setback'?plan.awayTarget:plan.houseTarget;
+ const baseTarget=manual?.target ?? scheduledTarget;
+ return {profile,occupancy,day,minute:at,slot,periodKey,scheduledTarget,baseTarget,activeTarget:Math.max(5,Math.min(28,baseTarget+(plan.version===2?0:profile.offset))),automatic,...(manual?{setpointOverride:manual}:{}),...(override?{override}:{})};
+}
+
+// Expire at the next actual schedule boundary, including midnight and clock changes.
+export function temporaryHouseSetpoint(plan,resolved,target,now,timezone){
+ const slots=(resolved.occupancy.effective==='away'?plan.awayTimeline:plan.timeline)[resolved.day===0||resolved.day===6?6:1];
+ const format=new Intl.DateTimeFormat('en-GB',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+ const boundary=at=>{const p=Object.fromEntries(format.formatToParts(new Date(at)).map(p=>[p.type,p.value])),minute=Number(p.hour)*60+Number(p.minute);return JSON.stringify([p.year,p.month,p.day,[...slots].reverse().find(s=>s.start<=minute).start]);};
+ const current=boundary(now);let expiresAt=Math.floor(now/60000)*60000+60000;
+ while(boundary(expiresAt)===current)expiresAt+=60000;
+ return {target,periodKey:resolved.periodKey,startedAt:new Date(now).toISOString(),expiresAt:new Date(expiresAt).toISOString()};
 }
