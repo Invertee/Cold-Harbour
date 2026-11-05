@@ -1,6 +1,7 @@
 import {resolveEnergyEntities,dailyRecord} from '../integrations/octopus-entities.js';
 import {localDate,localParts,dayStart,shiftDay} from '../time.js';
 import {defaults} from '../defaults.js';
+import {resolveHeatingPlan} from '../heating-plan.js';
 
 function gasReading(context,now){
  const {store,ha}=context,config=store.config(),settings={...defaults.gasBudget,...config.gasBudget};
@@ -11,17 +12,20 @@ function gasReading(context,now){
   const at=Date.parse(entity?.last_reported || entity?.last_updated),valid=record?.day===day&&Number.isFinite(at)&&at<=now+60000;
   return {value:valid?record[key]:null,at:valid?new Date(at).toISOString():null,fresh:Boolean(valid&&connectionFresh&&now-at<=settings.staleMinutes*60000)};
  };
- return {settings,day,source:gas.source,usage:read('today','kwh'),cost:read('todayCost','cost'),warnings:gas.warnings,timezone:config.general.timezone};
+ const resolved=resolveHeatingPlan(config.heatingPlan,connectionFresh?ha.states || []:[],now,config.general.timezone,ha.occupancyMemory ||= {});
+ return {settings,day,source:gas.source,usage:read('today','kwh'),cost:read('todayCost','cost'),warnings:gas.warnings,timezone:config.general.timezone,plan:config.heatingPlan,resolved};
 }
 
-// Timed allowances release a share of the daily budget at each window's start.
+// The heating schedule releases each period's share of the daily budget.
 // The cumulative allowance counts all household gas, including hot water, and
 // carries unused allowance forward without needing an invented meter baseline.
-export function budgetAllowance(settings,now,timezone){
- const p=localParts(new Date(now),timezone),minute=Number(p.hour)*60+Number(p.minute),periods=settings.periods || [];
- const current=periods.find(p=>minute>=p.start&&minute<p.end) || null;
- const share=periods.length?periods.filter(p=>minute>=p.start).reduce((sum,p)=>sum+p.share,0):100;
- return {current,share,limit:settings.dailyLimit*share/100,outsideWindow:periods.length>0&&!current,next:periods.find(p=>p.start>minute) || null};
+export function budgetAllowance(settings,now,timezone,plan,resolved){
+ const p=localParts(new Date(now),timezone),minute=Number(p.hour)*60+Number(p.minute),day=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(p.weekday);
+ const occupancy=resolved?.occupancy.effective || (plan?.occupancyMode==='away'?'away':'home'),key=occupancy==='away'?'awayTimeline':'timeline',scheduleDay=plan?.version===2?(day===0||day===6?6:1):day;
+ const slots=plan?.[key]?.[scheduleDay] || [],periods=slots.map((slot,i)=>({name:plan.activities.find(profile=>profile.id===slot.activityId)?.name || 'Heating period',start:slot.start,end:slots[i+1]?.start ?? 1440,share:slot.gasShare || 0}));
+ const scheduled=periods.some(period=>period.share>0),current=periods.find(period=>minute>=period.start&&minute<period.end) || null;
+ const share=scheduled?periods.filter(period=>minute>=period.start).reduce((sum,period)=>sum+period.share,0):100;
+ return {current,share,limit:settings.dailyLimit*share/100,scheduled,periods,occupancy,next:scheduled?periods.find(period=>period.start>minute&&period.share>0) || null:null};
 }
 
 export function createGasBudget(context){
@@ -37,19 +41,19 @@ export function createGasBudget(context){
     .run(r.source,r.day,at,r.usage.fresh?r.usage.value:null,r.cost.fresh?r.cost.value:null,r.usage.fresh?r.usage.at:null,r.cost.fresh?r.cost.at:null);
   },
   status(now=Date.now()){
-   const r=gasReading(context,now),{settings,day,source,timezone}=r,allowance=budgetAllowance(settings,now,timezone);
+   const r=gasReading(context,now),{settings,day,source,timezone}=r,allowance=budgetAllowance(settings,now,timezone,r.plan,r.resolved);
    const history=source?store.db.prepare('SELECT MAX(kwh) kwh,MAX(cost) cost FROM gas_samples WHERE source=? AND day=?').get(source,day):{};
    const metric=settings.unit==='cost'?r.cost:r.usage,recorded=history?.[settings.unit==='cost'?'cost':'kwh'];
    const used=metric.value===null?(recorded ?? null):Math.max(metric.value,recorded ?? metric.value);
-   const dailyReached=used!==null&&used>=settings.dailyLimit,allowanceReached=used!==null&&used>=allowance.limit;
+   const dailyReached=used!==null&&used>=settings.dailyLimit,allowanceReached=allowance.limit===0||used!==null&&used>=allowance.limit;
    const unavailable=!metric.fresh;
    // A witnessed cap remains in effect through stale readings until local
    // midnight. Missing data alone never becomes zero consumption or a cap.
-   const blocked=Boolean(dailyReached||allowance.outsideWindow||allowanceReached);
+   const blocked=Boolean(dailyReached||allowanceReached);
    const paused=Boolean(settings.enabled&&settings.action==='pause'&&blocked);
    const amount=n=>settings.unit==='cost'?`£${n.toFixed(2)}`:`${n.toFixed(1)} kWh`;
    const reason=dailyReached?`Daily gas budget reached (${amount(used)} / ${amount(settings.dailyLimit)}). Resumes after local midnight.`:
-    allowance.outsideWindow?'Outside the budget’s heating windows.':allowanceReached?`Gas allowance reached (${amount(used)} / ${amount(allowance.limit)} available so far). Waiting for the next heating window.`:
+    allowanceReached?`Gas allowance reached (${used===null?'no reading':amount(used)} / ${amount(allowance.limit)} available so far). Waiting for the next heating schedule allocation.`:
     unavailable?'Gas reading unavailable or too old. Budget cutoff is waiting for a fresh daily reading.':`Within gas budget (${amount(used)} / ${amount(allowance.limit)} available so far).`;
    return {settings,day,source,timezone,kwh:r.usage.value,cost:r.cost.value,usageAt:r.usage.at,costAt:r.cost.at,usageFresh:r.usage.fresh,costFresh:r.cost.fresh,
     used,remaining:used===null?null:Math.max(0,settings.dailyLimit-used),availableRemaining:used===null?null:Math.max(0,allowance.limit-used),

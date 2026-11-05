@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalisePoints,nearestIndex,chartShell,reduceLine,lineTooltipPlacement,nearestChartLine} from '../public/charts.js';
+import {normalisePoints,nearestIndex,chartShell,reduceLine,lineTooltipPlacement,nearestChartLine,booleanIntervals} from '../public/charts.js';
 import {time,dateTime,clockTime,clockValue,clockInput} from '../public/ui.js';
 
 test('line labels stay within the plot while the readout occupies its own column',()=>{
@@ -48,6 +48,31 @@ test('week-scale line rendering preserves extrema and actual gaps while bounding
  const result=reduceLine(rows,'value',[0,20160*30000],800,90000);
  assert.ok(result.length<3300);assert.ok(result.some(row=>row?.value===80));assert.ok(result.some(row=>row?.value===-5));assert.ok(result.includes(null));assert.equal(result[0],rows[0]);assert.equal(result.at(-1),rows.at(-1));
  const gap=reduceLine([{time:0,value:1},{time:90001,value:2}],'value',[0,100000],1,90000);assert.equal(gap[1],null);
+});
+
+test('flame intervals use explicit reports independently of modulation and leave missing or stale periods unknown',()=>{
+ const at=seconds=>new Date(Date.UTC(2026,10,5,17)+seconds*1000).toISOString();
+ const points=normalisePoints([
+  {at:at(0),modulation_pct:55},
+  {at:at(60),flame:true,modulation_pct:55},
+  {at:at(120),flame:true,modulation_pct:30},
+  {at:at(180),flame:false,modulation_pct:55},
+  {at:at(240),flame:null},
+  {at:at(300),flame:true},
+  {at:at(600),flame:false},
+  {at:at(660),flame:0},
+  {at:at(720),flame:'false'},
+  {at:at(780),flame:true}
+ ]);
+ assert.deepEqual(booleanIntervals(points,'flame',at(800)),[
+  {from:Date.parse(at(60)),until:Date.parse(at(180)),value:true},
+  {from:Date.parse(at(180)),until:Date.parse(at(240)),value:false},
+  {from:Date.parse(at(300)),until:Date.parse(at(390)),value:true},
+  {from:Date.parse(at(600)),until:Date.parse(at(660)),value:false},
+  {from:Date.parse(at(780)),until:Date.parse(at(800)),value:true}
+ ]);
+ assert.deepEqual(booleanIntervals([],'flame',at(800)),[]);
+ assert.deepEqual(booleanIntervals(points,'flame',at(60)),[]);
 });
 
 test('all displayed clock values use am/pm including noon, midnight and UK clock changes',()=>{

@@ -89,7 +89,29 @@ test('minute history records fresh room/boiler context once and preserves missin
  const store=fixture(t),summary=()=>({plan:{settings:{houseTarget:20},activeTarget:19,profile:{name:'Test'},occupancy:{effective:'home'}},rooms:[{id:'office',current:18,target:20,sourceAt:new Date(now).toISOString(),sensorFingerprint:'sensor.office'}]});
  let connected=true;const context={store,boiler:{status:()=>({connected,telemetry:{requested_flow_c:45,modulation_pct:30,pid_output:.6,heating_sample_valid:true,ch_active:true,dhw_active:false,flame:true,boiler_fault:false,opentherm_age_s:2,thermal_context:'space_heating'}})}};
  const history=createHeatingHistory(context,summary);history.capture(now);history.capture(now+10000);connected=false;history.capture(now+60000);
- const chart=history.chart(60,now+60000);assert.equal(chart.points.length,2);assert.equal(chart.points[0].pid_output_pct,60);assert.equal(chart.points[1].modulation_pct,null);assert.equal(chart.points[0].room_office,18);assert.equal(chart.points[0].target_office,20);assert.throws(()=>history.chart(12),e=>e.status===400);
+ const chart=history.chart(60,now+60000);assert.equal(chart.points.length,2);assert.equal(chart.points[0].pid_output_pct,60);assert.equal(chart.points[1].modulation_pct,null);assert.equal(chart.points[0].flame,true);assert.equal(chart.points[1].flame,null);assert.equal(chart.points[0].room_office,18);assert.equal(chart.points[0].target_office,20);assert.throws(()=>history.chart(12),e=>e.status===400);
+});
+
+test('flame history records on and off reports even with modulation, but withholds stale, missing and legacy states',t=>{
+ const store=fixture(t),summary=()=>({rooms:[]});
+ let telemetry={};const context={store,boiler:{status:()=>({connected:true,telemetry})}};
+ const history=createHeatingHistory(context,summary);
+ const reports=[
+  {flame:true,opentherm_age_s:1,modulation_pct:55,thermal_context:'domestic_hot_water'},
+  {flame:false,opentherm_age_s:1,modulation_pct:55,thermal_context:'space_heating'},
+  {flame:true,opentherm_age_s:90},
+  {flame:false,opentherm_age_s:91},
+  {flame:true},
+  {opentherm_age_s:1},
+  {flame:true,opentherm_age_s:null},
+  {flame:'false',opentherm_age_s:1}
+ ];
+ reports.forEach((report,i)=>{telemetry=report;history.capture(now+i*60000);});
+ store.db.prepare('INSERT INTO heating_samples VALUES (?,?)').run(new Date(now-60000).toISOString(),JSON.stringify({rooms:[],boiler:{modulation_pct:55}}));
+ const points=history.chart(60,now+reports.length*60000).points;
+ assert.equal(points[0].flame,undefined);
+ assert.deepEqual(points.slice(1).map(row=>row.flame),[true,false,null,null,null,null,null,null]);
+ assert.equal(points[2].modulation_pct,55);
 });
 
 test('heating plan HTTP edits persist without granting any boiler control or exposing credentials',async t=>{

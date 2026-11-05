@@ -1,6 +1,6 @@
 import {roomCard} from '../room-card.js';
 import {heatingOverview} from '../heating-overview.js';
-import {openHeatingAnalysis} from './heating-analysis.js';
+import {openHeatingDialog} from './heating-dialog.js';
 import {api,esc,fixed,icon,pill,empty,dateTime} from '../ui.js';
 
 import {chartShell,bindChart,chartColours} from '../charts.js';
@@ -37,7 +37,7 @@ export const heatingView={
 
   <div class="room-grid climate-rooms">${data.rooms.length?data.rooms.map(room=>roomCard(room,smart,insights.rooms.find(r=>r.id===room.id))).join(''):empty('No rooms configured','Add a room and select its temperature sensors.')}</div>
 
-  <section class="card full-chart-card heating-history"><div class="section-heading"><div><h2>Rooms, targets and boiler demand</h2><p class="field-help">${esc(history.resolution)}</p></div><div class="segmented" aria-label="Heating history duration">${[[60,'1 hour'],[360,'6 hours'],[1440,'24 hours'],[10080,'7 days']].map(([id,label])=>`<button data-heating-minutes="${id}" class="${this.minutes===id?'selected':''}">${label}</button>`).join('')}</div></div><label class="check-label"><input id="show-room-targets" type="checkbox" ${this.showRoomTargets?'checked':''}> Show each room’s target as a dashed line</label>${chartShell('heating-room-chart','Room temperatures and planned targets')}<h3 class="boiler-history-label">Boiler request and modulation</h3>${chartShell('heating-demand-chart','Boiler requested flow temperature and modulation')}</section>
+  <section class="card full-chart-card heating-history"><div class="section-heading"><div><h2>Rooms, targets and boiler demand</h2><p class="field-help">${esc(history.resolution)}</p></div><div class="segmented" aria-label="Heating history duration">${[[60,'1 hour'],[360,'6 hours'],[1440,'24 hours'],[10080,'7 days']].map(([id,label])=>`<button data-heating-minutes="${id}" class="${this.minutes===id?'selected':''}">${label}</button>`).join('')}</div></div><label class="check-label"><input id="show-room-targets" type="checkbox" ${this.showRoomTargets?'checked':''}> Show each room’s target as a dashed line</label>${chartShell('heating-room-chart','Room temperatures and planned targets')}<h3 class="boiler-history-label">Boiler request and modulation</h3>${chartShell('heating-demand-chart','Boiler requested flow temperature, modulation and flame state')}<p class="field-help">The flame strip shows the reported burner state at one-minute intervals. Modulation can remain above zero while the flame is off. Hatched areas have no flame reading.</p></section>
 
 `;
 
@@ -46,8 +46,8 @@ export const heatingView={
  bind(ctx){
 
   bindPlanning(this,ctx);
-  document.querySelector('#open-heating-analysis').onclick=()=>openHeatingAnalysis(ctx);
-  document.querySelector('#open-forecast-analysis').onclick=()=>openHeatingAnalysis(ctx,{tab:'forecast'});
+  document.querySelector('#open-heating-analysis').onclick=()=>openHeatingDialog(ctx,{view:this,tab:'observations'});
+  document.querySelector('#open-forecast-analysis').onclick=()=>openHeatingDialog(ctx,{view:this,tab:'forecast'});
 
   bindRadiators(ctx);
 
@@ -67,7 +67,7 @@ export const heatingView={
 
   rooms=bindChart(document.querySelector('#heating-room-chart'),{...common,bands:this.showRoomPhases?this.history.phaseBands:[],bandStyles:this.showRoomPhases?phaseStyles:[],state:this.roomChartState,series:[...this.history.rooms.map((r,i)=>({key:`room_${r.id}`,label:r.name,colour:colours[i%colours.length]})),{key:'house_target_c',label:'House target',colour:'#344b59',dashed:true},...targets],extraTooltip:row=>[['Schedule period',row.activity],['Schedule base target',`${fixed(row.active_target_c)} °C`],['Household',row.occupancy],['Boiler phase',phaseNames[row.thermal_context] || 'Unknown'],['Boiler flow request',`${fixed(row.requested_flow_c)} °C`],['Boiler modulation',`${fixed(row.modulation_pct)} %`],['Outside',`${fixed(row.outdoor_c)} °C`],['Smart plan',row.planned_reason]],onRangeChange:(range,zoomed)=>demand?.setView(range,zoomed)});
 
-  demand=bindChart(document.querySelector('#heating-demand-chart'),{...common,state:this.boilerChartState,series:[{key:'planned_flow_c',label:'Smart Thermostat plan',colour:chartColours[1],unit:'°C',dashed:true},{key:'requested_flow_c',label:'Actual requested flow',colour:chartColours[0],unit:'°C'},{key:'modulation_pct',label:'Actual modulation',colour:chartColours[2],unit:'%',axis:'right'},{key:'pid_output_pct',label:'Local PID demand',colour:chartColours[3],unit:'%',axis:'right',dashed:true},...this.history.rooms.filter(r=>this.data.rooms.some(room=>room.id===r.id&&room.radiator)).map((r,i)=>({key:`valve_${r.id}`,label:`${r.name} planned opening`,colour:colours[(i+4)%colours.length],unit:'%',axis:'right',dashed:true}))],extraTooltip:row=>[['Schedule period',row.activity],['Boiler phase',phaseNames[row.thermal_context] || 'Unknown'],['Outside',`${fixed(row.outdoor_c)} °C`],['Smart plan',row.planned_reason]],onRangeChange:(range,zoomed)=>rooms?.setView(range,zoomed)});
+  demand=bindChart(document.querySelector('#heating-demand-chart'),{...common,state:this.boilerChartState,statusTracks:[{key:'flame',label:'Flame',colour:'#c44417'}],series:[{key:'planned_flow_c',label:'Smart Thermostat plan',colour:chartColours[1],unit:'°C',dashed:true},{key:'requested_flow_c',label:'Actual requested flow',colour:chartColours[0],unit:'°C'},{key:'modulation_pct',label:'Actual modulation',colour:chartColours[2],unit:'%',axis:'right'},{key:'pid_output_pct',label:'Local PID demand',colour:chartColours[3],unit:'%',axis:'right',dashed:true},...this.history.rooms.filter(r=>this.data.rooms.some(room=>room.id===r.id&&room.radiator)).map((r,i)=>({key:`valve_${r.id}`,label:`${r.name} planned opening`,colour:colours[(i+4)%colours.length],unit:'%',axis:'right',dashed:true}))],extraTooltip:row=>[['Schedule period',row.activity],['Boiler phase',phaseNames[row.thermal_context] || 'Unknown'],['Outside',`${fixed(row.outdoor_c)} °C`],['Smart plan',row.planned_reason]],onRangeChange:(range,zoomed)=>rooms?.setView(range,zoomed)});
 
   document.querySelector('#show-room-targets').onchange=event=>{this.showRoomTargets=event.target.checked;ctx.reload();};
   document.querySelector('#show-room-phases').onchange=event=>{this.showRoomPhases=event.target.checked;ctx.reload();};

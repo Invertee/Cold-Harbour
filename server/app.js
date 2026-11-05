@@ -82,6 +82,18 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
     void tick().catch(()=>{});
     return publicConfig();
   });
+  route('POST','/api/heating/plan',({body})=>{
+    if(!body||Object.keys(body).some(key=>!['heatingPlan','gasBudget'].includes(key))||!body.heatingPlan||!body.gasBudget)throw new HttpError(400,'Choose a heating plan and daily gas budget.');
+    const current=store.config(),plan=validateConfig('heatingPlan',body.heatingPlan,current.heatingPlan),budget=validateConfig('gasBudget',body.gasBudget,current.gasBudget);
+    store.db.exec('BEGIN');
+    try{
+      store.save('heatingPlan',plan);store.save('gasBudget',budget);
+      store.log('settings','Heating schedule and gas allocations updated.');
+      store.db.exec('COMMIT');
+    }catch(error){store.db.exec('ROLLBACK');throw error;}
+    void tick().catch(()=>{});
+    return publicConfig();
+  });
   for (const table of ['rooms','rules']) {
     route('POST',`/api/${table}`,({body})=>{
       const value = table === 'rooms' ? validateRoom(body) : validateRule(body,store.list('rooms'));

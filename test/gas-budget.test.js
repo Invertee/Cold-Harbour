@@ -7,13 +7,20 @@ import {createStore} from '../server/db.js';
 import {createApplication} from '../server/app.js';
 import {validateBackupData} from '../server/backups.js';
 import {defaults} from '../server/defaults.js';
-import {validateConfig} from '../server/validate.js';
+import {validateConfig,validateHeatingPlan} from '../server/validate.js';
+import {integrateGasBudget} from '../server/heating-plan.js';
 import {budgetAllowance,createGasBudget} from '../server/modules/gas-budget.js';
 import {gasBudgetMarkup,gasBudgetEditor} from '../public/modules/gas-budget.js';
 
 const now=Date.parse('2026-11-05T12:00:00Z'),zone='Europe/London';
 const settings={...defaults.gasBudget,enabled:true,action:'pause',dailyLimit:50};
 const periods=[{name:'Morning',start:360,end:540,share:30},{name:'Lunch',start:720,end:840,share:20},{name:'Evening',start:1020,end:1320,share:50}];
+function scheduledPlan(){
+ const plan=structuredClone(defaults.heatingPlan);
+ for(const [id,name] of [['home','Morning'],['work','Lunch'],['evening','Evening']])plan.activities.find(p=>p.id===id).name=name;
+ plan.timeline=Array.from({length:7},()=>[{start:0,activityId:'sleep',gasShare:0},{start:360,activityId:'home',gasShare:30},{start:720,activityId:'work',gasShare:20},{start:1020,activityId:'evening',gasShare:50}]);
+ plan.awayTimeline=structuredClone(plan.timeline);return plan;
+}
 function fixture(t){
  const directory=mkdtempSync(join(tmpdir(),'cold-gas-')),store=createStore(directory);
  store.save('energy',{...store.config().energy,gasToday:'sensor.gas_today',gasTodayCost:'sensor.gas_cost'});store.save('gasBudget',settings);
@@ -47,30 +54,51 @@ test('missing, yesterday, future, stale, volumetric and unrelated meter data nev
  f.context.ha.states=[];assert.equal(f.budget.status(now).used,null);
 });
 
-test('timed allowances reserve later budget, carry unused allowance, and close between windows',t=>{
- const f=fixture(t);f.store.save('gasBudget',{...settings,periods});
+test('heating periods release reserved allowance and carry unused gas through the same schedule',t=>{
+ const f=fixture(t),plan=scheduledPlan();f.store.save('heatingPlan',plan);
  const at=hour=>Date.parse(`2026-11-05T${String(hour).padStart(2,'0')}:00:00Z`);
- assert.equal(budgetAllowance({...settings,periods},at(7),zone).limit,15);
- assert.equal(budgetAllowance({...settings,periods},at(12),zone).limit,25);
- assert.equal(budgetAllowance({...settings,periods},at(18),zone).limit,50);
+ assert.equal(budgetAllowance(settings,at(5),zone,plan).limit,0);
+ assert.equal(budgetAllowance(settings,at(7),zone,plan).limit,15);
+ assert.equal(budgetAllowance(settings,at(12),zone,plan).limit,25);
+ assert.equal(budgetAllowance(settings,at(18),zone,plan).limit,50);
+ assert.equal(f.budget.status(at(5)).paused,true,'No allowance is released before the first allocated heating period.');
  f.reading(16,1,at(7));let s=f.budget.status(at(7));assert.equal(s.paused,true);assert.equal(s.dailyReached,false);
  f.reading(16,1,at(12));s=f.budget.status(at(12));assert.equal(s.paused,false);assert.equal(s.availableRemaining,9);
- f.reading(16,1,at(14));assert.equal(f.budget.status(at(14)).paused,true);
- f.store.save('gasBudget',{...settings,periods,action:'monitor'});s=f.budget.status(at(14));assert.equal(s.paused,false);assert.equal(s.wouldPause,true);
- f.store.save('gasBudget',{...settings,periods,enabled:false});assert.equal(f.budget.status(at(14)).paused,false);
+ f.reading(16,1,at(14));assert.equal(f.budget.status(at(14)).paused,false,'The heating schedule continues; there are no separate budget windows.');
+ f.reading(26,1,at(14));assert.equal(f.budget.status(at(14)).paused,true);
+ f.store.save('gasBudget',{...settings,action:'monitor'});s=f.budget.status(at(14));assert.equal(s.paused,false);assert.equal(s.wouldPause,true);
+ f.store.save('gasBudget',{...settings,enabled:false});assert.equal(f.budget.status(at(14)).paused,false);
+});
+
+test('budget releases follow home/away selection, away delay and weekday/weekend heating groups',t=>{
+ const f=fixture(t),plan=scheduledPlan();plan.people=[{entityId:'person.sam',name:'Sam'}];plan.awayDelayMinutes=10;
+ for(const slots of plan.awayTimeline){slots[1].gasShare=10;slots[3].gasShare=70;}
+ plan.timeline[6][1].start=480;plan.timeline[0]=structuredClone(plan.timeline[6]);
+ f.store.save('heatingPlan',plan);f.reading();f.context.ha.states.push({entity_id:'person.sam',state:'not_home'});
+ let s=f.budget.status(now);assert.equal(s.allowance.occupancy,'home');assert.equal(s.allowance.limit,25);
+ f.reading(12,1,now+11*60000);f.context.ha.states.push({entity_id:'person.sam',state:'not_home'});s=f.budget.status(now+11*60000);assert.equal(s.allowance.occupancy,'away');assert.equal(s.allowance.limit,15);
+ f.reading(12,1,now+12*60000);f.context.ha.states.push({entity_id:'person.sam',state:'unknown'});s=f.budget.status(now+12*60000);assert.equal(s.allowance.occupancy,'home');
+ const saturday=Date.parse('2026-11-07T07:00:00Z');assert.equal(budgetAllowance(settings,saturday,zone,plan).limit,0);
+ assert.equal(budgetAllowance(settings,Date.parse('2026-11-05T07:00:00Z'),zone,plan).limit,15);
 });
 
 test('caps reset by the configured local day and do not leak across meter mappings',t=>{
  const f=fixture(t);f.reading(55,4);f.budget.capture(now);
  const next=Date.parse('2026-11-06T00:01:00Z');f.reading(0,0,next);assert.equal(f.budget.status(next).paused,false);assert.equal(f.budget.status(next).used,0);
  f.reading(1,0.1);f.store.save('energy',{...f.store.config().energy,gasToday:'sensor.other_meter'});f.context.ha.states.push({...f.context.ha.states[0],entity_id:'sensor.other_meter'});assert.equal(f.budget.status(now).used,1);
- const summer=budgetAllowance({...settings,periods},Date.parse('2026-07-01T05:30:00Z'),zone);assert.equal(summer.current.name,'Morning');
+ const summer=budgetAllowance(settings,Date.parse('2026-07-01T05:30:00Z'),zone,scheduledPlan());assert.equal(summer.current.name,'Morning');
  f.reading(1,0.1,Date.parse('2026-10-25T00:30:00Z'));const s=f.budget.status(Date.parse('2026-10-25T00:30:00Z'));assert.equal(s.resetsAt,'2026-10-26T00:00:00.000Z');
 });
 
-test('budget settings validate window shares, ordering, limits and explicit action',()=>{
- assert.doesNotThrow(()=>validateConfig('gasBudget',{...settings,periods},defaults.gasBudget));
- for(const input of [{dailyLimit:0},{unit:'m3'},{action:'cut-gas'},{staleMinutes:0},{enabled:'yes'},{periods:[{...periods[0],share:50}]},{periods:[{...periods[0],share:50},{...periods[0],share:50}]},{periods:[{name:'Bad',start:60,end:60,share:100}]}])assert.throws(()=>validateConfig('gasBudget',input,settings),e=>e.status===400);
+test('daily budget settings and per-schedule shares validate independently',()=>{
+ assert.doesNotThrow(()=>validateConfig('gasBudget',settings,defaults.gasBudget));
+ for(const input of [{dailyLimit:0},{unit:'m3'},{action:'cut-gas'},{staleMinutes:0},{enabled:'yes'},{periods}])assert.throws(()=>validateConfig('gasBudget',input,settings),e=>e.status===400);
+ const plan=scheduledPlan();assert.deepEqual(validateHeatingPlan(plan).timeline,plan.timeline);
+ for(const share of [-1,101,NaN,'30',undefined]){
+  const invalid=structuredClone(plan);invalid.timeline[1][1].gasShare=share;assert.throws(()=>validateHeatingPlan(invalid),e=>e.status===400);
+ }
+ const allDay=structuredClone(plan);for(const slots of allDay.timeline)for(const slot of slots)slot.gasShare=0;
+ assert.doesNotThrow(()=>validateHeatingPlan(allDay));assert.equal(budgetAllowance(settings,now,zone,allDay).limit,50);
 });
 
 test('budget panel and editor explain data age, delayed cutoffs and Active-only control',t=>{
@@ -79,16 +107,39 @@ test('budget panel and editor explain data age, delayed cutoffs and Active-only 
  const editor=gasBudgetEditor({...settings,periods});assert.match(editor,/value="monitor"/);assert.match(editor,/value="pause" selected/);assert.match(editor,/Shares must total 100%/);
 });
 
-test('gas budget API saves validated settings, protects writes, and survives an application restart',async()=>{
+test('heating plan and budget save together, protect writes, reject partial saves and survive restart',async()=>{
  const directory=mkdtempSync(join(tmpdir(),'cold-gas-api-'));let app=createApplication({dataDir:directory});
  try{
-  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${app.server.address().port}`,body=JSON.stringify({section:'gasBudget',values:{...settings,periods}});
-  let response=await fetch(base+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body});assert.equal(response.status,403);
-  response=await fetch(base+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-MODS-Request':'1'},body});assert.equal(response.status,200);assert.deepEqual((await response.json()).gasBudget,{...settings,periods});
-  response=await fetch(base+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-MODS-Request':'1'},body:JSON.stringify({section:'gasBudget',values:{dailyLimit:-1}})});assert.equal(response.status,400);assert.equal(app.context.store.config().gasBudget.dailyLimit,50);
-  response=await fetch(base+'/api/energy/gas-budget');assert.equal(response.status,200);const data=await response.json();assert.deepEqual(data.settings.periods,periods);assert.equal(data.used,null);
-  await app.close();app=createApplication({dataDir:directory});assert.deepEqual(app.context.store.config().gasBudget,{...settings,periods});
+  await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${app.server.address().port}`,plan=scheduledPlan(),body=JSON.stringify({heatingPlan:plan,gasBudget:settings});
+  let response=await fetch(base+'/api/heating/plan',{method:'POST',headers:{'Content-Type':'application/json'},body});assert.equal(response.status,403);
+  const headers={'Content-Type':'application/json','X-MODS-Request':'1'};
+  response=await fetch(base+'/api/heating/plan',{method:'POST',headers,body});assert.equal(response.status,200);assert.deepEqual((await response.json()).gasBudget,settings);
+  const invalid=structuredClone(plan);invalid.timeline[1][1].gasShare=60;
+  response=await fetch(base+'/api/heating/plan',{method:'POST',headers,body:JSON.stringify({heatingPlan:invalid,gasBudget:{...settings,dailyLimit:60}})});assert.equal(response.status,400);assert.equal(app.context.store.config().gasBudget.dailyLimit,50);assert.deepEqual(app.context.store.config().heatingPlan.timeline,plan.timeline);
+  const renamed=structuredClone(plan);renamed.activities[0].name='Unsaved';
+  response=await fetch(base+'/api/heating/plan',{method:'POST',headers,body:JSON.stringify({heatingPlan:renamed,gasBudget:{...settings,dailyLimit:-1}})});assert.equal(response.status,400);assert.notEqual(app.context.store.config().heatingPlan.activities[0].name,'Unsaved');
+  response=await fetch(base+'/api/energy/gas-budget');assert.equal(response.status,200);const data=await response.json();assert.equal(data.allowance.periods.length,4);assert.equal(data.used,null);assert.equal(data.settings.periods,undefined);
+  await app.close();app=createApplication({dataDir:directory});assert.deepEqual(app.context.store.config().gasBudget,settings);assert.deepEqual(app.context.store.config().heatingPlan.timeline,plan.timeline);
  }finally{await app.close();const p=resolve(directory);assert.ok(p.startsWith(resolve(tmpdir())+sep)&&basename(p).startsWith('cold-gas-'));rmSync(p,{recursive:true,force:true});}
+});
+
+test('upgrade moves legacy gas shares onto unchanged heating periods and archives old settings once',t=>{
+ const directory=mkdtempSync(join(tmpdir(),'cold-gas-migrate-'));let store=createStore(directory);
+ t.after(()=>{store.close();const p=resolve(directory);assert.ok(p.startsWith(resolve(tmpdir())+sep)&&basename(p).startsWith('cold-gas-'));rmSync(p,{recursive:true,force:true});});
+ const previous=scheduledPlan();for(const key of ['timeline','awayTimeline'])for(const slots of previous[key])for(const slot of slots)delete slot.gasShare;
+ store.save('heatingPlan',previous);store.save('gasBudget',{...settings,periods});store.db.prepare('DELETE FROM migrations WHERE version=13').run();store.close();store=createStore(directory);
+ const saved=store.config();assert.deepEqual(saved.gasBudget,settings);assert.deepEqual(saved.heatingPlan.timeline[1].map(p=>p.gasShare || 0),[0,30,20,50]);
+ assert.deepEqual(saved.heatingPlan.timeline[1].map(({gasShare,...slot})=>slot),previous.timeline[1]);assert.deepEqual(saved.heatingPlan.activities,previous.activities);
+ assert.deepEqual(JSON.parse(store.db.prepare("SELECT value FROM settings WHERE section='gasBudgetBeforeHeatingSchedule'").get().value),{...settings,periods});
+ const migrated=saved.heatingPlan;store.close();store=createStore(directory);assert.deepEqual(store.config().heatingPlan,migrated);
+});
+
+test('legacy backup windows migrate to heating shares while malformed allocations are rejected',t=>{
+ const f=fixture(t),config=f.store.config();config.gasBudget={...settings,periods};
+ const data={appVersion:'0.16.0',exportedAt:new Date(now).toISOString(),config,rooms:f.store.list('rooms'),rules:f.store.list('rules'),secrets:{haToken:'',boilerKey:''}};
+ const backup=validateBackupData(data);assert.equal(backup.config.gasBudget.periods,undefined);assert.doesNotThrow(()=>validateHeatingPlan(backup.config.heatingPlan));assert.ok(backup.config.heatingPlan.timeline[1].some(slot=>slot.gasShare>0));
+ const invalid=structuredClone(data);invalid.config.gasBudget.periods[0].share=-10;assert.throws(()=>validateBackupData(invalid),e=>e.status===400);
+ const merged=integrateGasBudget(scheduledPlan(),{...settings,periods});assert.deepEqual(merged.plan,scheduledPlan(),'Already allocated heating periods keep their shares.');
 });
 
 test('older installations and backups gain disabled budget defaults without losing heating curve tuning',t=>{

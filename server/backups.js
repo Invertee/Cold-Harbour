@@ -4,6 +4,7 @@ import metadata from '../package.json' with {type:'json'};
 import {defaults} from './defaults.js';
 import {HttpError} from './http.js';
 import {validateConfig,validateRoom,validateRule} from './validate.js';
+import {integrateGasBudget} from './heating-plan.js';
 
 export const MAX_BACKUP_BYTES=8*1024*1024;
 const deriveKey=promisify(scrypt),format='cold-harbour-backup',version=1;
@@ -35,6 +36,11 @@ export function validateBackupData(data){
   // Backups from before notification settings existed remain importable.
   if(object(data.config)&&!Object.hasOwn(data.config,'notifications'))data={...data,config:{...data.config,notifications:structuredClone(defaults.notifications)}};
   if(object(data.config)&&!Object.hasOwn(data.config,'gasBudget'))data={...data,config:{...data.config,gasBudget:structuredClone(defaults.gasBudget)}};
+  const legacyPeriods=data.config?.gasBudget?.periods;
+  if(object(data.config?.gasBudget)&&Object.hasOwn(data.config.gasBudget,'periods')){
+    const {periods,...gasBudget}=data.config.gasBudget;
+    data={...data,config:{...data.config,gasBudget}};
+  }
   keys(data.config,Object.keys(defaults),'backup settings');
   const config={};
   for(const [section,initial] of Object.entries(defaults)){
@@ -45,6 +51,10 @@ export function validateBackupData(data){
     }else config[section]=validateConfig(section,data.config[section],initial);
   }
   if(config.heatingPlan.version!==2)fail('This backup needs a current High/Low heating schedule.');
+  if(legacyPeriods!==undefined){
+    const migrated=integrateGasBudget(config.heatingPlan,{...config.gasBudget,periods:legacyPeriods});
+    config.heatingPlan=validateConfig('heatingPlan',migrated.plan,defaults.heatingPlan);
+  }
   if(!Array.isArray(data.rooms)||data.rooms.length>1000||!Array.isArray(data.rules)||data.rules.length>10000)fail('Invalid backup rooms or schedules.');
   const uniqueRecords=(records,validate)=>{
     const ids=new Set();

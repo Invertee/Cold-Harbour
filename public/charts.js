@@ -47,9 +47,24 @@ export function reduceLine(rows,key,range,pixels,maxGapMs){
   }
   flush();return out;
 }
+// Boolean reports hold until the next observation or expiry; missing reports
+// and outages remain gaps rather than being mistaken for an off state.
+export function booleanIntervals(points,key,end,maxGapMs=90000){
+  const intervals=[],endTime=Date.parse(end);
+  for(let i=0;i<points.length;i++){
+    const row=points[i],from=Date.parse(row.at),value=row[key];
+    if(typeof value!=='boolean'||!Number.isFinite(from))continue;
+    const until=Math.min(endTime,from+maxGapMs,i+1<points.length?Date.parse(points[i+1].at):endTime);
+    if(!(until>from))continue;
+    const previous=intervals.at(-1);
+    if(previous?.value===value&&previous.until===from)previous.until=until;
+    else intervals.push({from,until,value});
+  }
+  return intervals;
+}
 export const chartShell=(id,label,{compact=false}={})=>`<div id="${esc(id)}" class="interactive-chart ${compact?'compact-chart':''}"><div class="chart-controls"><div class="chart-series" aria-label="Chart series"></div>${compact?'':`<div class="chart-actions"><button type="button" data-chart-action="out">Zoom out</button><button type="button" data-chart-action="reset">Reset view</button><button type="button" data-chart-action="csv">CSV</button></div>`}</div><div class="chart-stage"><div class="chart-layout"><div class="chart-plot-area"><svg class="chart-plot" tabindex="0" role="img" aria-label="${esc(label)}. Use left and right arrows to inspect readings." aria-describedby="${esc(id)}-help"></svg></div><aside class="chart-inspector" aria-label="Chart values"><div class="chart-tooltip" hidden></div><p class="chart-inspector-hint">Hover or tap the graph to inspect readings.</p></aside></div></div><div class="chart-footer-note"><span class="chart-range"></span><span id="${esc(id)}-help">${compact?'Hover or tap for values':'Drag to zoom · hover or tap for values · ← → to inspect'}</span></div><output class="sr-only chart-readout" aria-live="polite"></output></div>`;
 
-export function bindChart(element,{rows,series,start,end,timezone='Europe/London',kind='line',unit='',compact=false,maxGapMs=90000,state={},extraTooltip=()=>[],extraExport=[],bands=[],bandStyles=[],references=[],rightUnit='%',rightDomain=[0,100],onRangeChange=()=>{}}){
+export function bindChart(element,{rows,series,start,end,timezone='Europe/London',kind='line',unit='',compact=false,maxGapMs=90000,state={},extraTooltip=()=>[],extraExport=[],bands=[],bandStyles=[],statusTracks=[],references=[],rightUnit='%',rightDomain=[0,100],onRangeChange=()=>{}}){
   if(!element)return;
   const points=normalisePoints(rows),svg=element.querySelector('svg'),tooltip=element.querySelector('.chart-tooltip'),stage=element.querySelector('.chart-stage'),plotArea=element.querySelector('.chart-plot-area');
   const lineLabel=document.createElement('div');lineLabel.className='chart-line-label';lineLabel.hidden=true;plotArea.append(lineLabel);
@@ -60,17 +75,22 @@ export function bindChart(element,{rows,series,start,end,timezone='Europe/London
   const full=[fullStart,Math.max(fullEnd,fullStart+1000)],hidden=new Set(state.hidden || []);
   let range=state.zoomed?[Math.max(full[0],state.start),Math.min(full[1],state.end)]:[...full];if(!(range[1]>range[0]))range=[...full];
   const hasRight=series.some(s=>s.axis==='right');
-  let width=800,height=compact?150:340,left=compact?40:58,right=hasRight?54:18,top=22,bottom=compact?25:44,visible=[],minY=0,maxY=1,index=0,drag=null,pinned=false;
+  const trackSpace=statusTracks.length*28;
+  let width=800,height=(compact?150:340)+trackSpace,left=compact?40:58,right=hasRight?54:18,top=22,bottom=(compact?25:44)+trackSpace,visible=[],minY=0,maxY=1,index=0,drag=null,pinned=false;
   const stamp=at=>dateTime(at,timezone,{day:'2-digit',month:'short',second:'2-digit',timeZoneName:'short'});
   const timeBands=bands.map(b=>({...b,from:Date.parse(b.start),until:Date.parse(b.end)})).filter(b=>Number.isFinite(b.from)&&b.until>b.from);
   const styles=new Map(bandStyles.map(b=>[b.key,b]));
   if(bandStyles.length){const legend=document.createElement('div');legend.className='chart-phase-legend';legend.innerHTML=`<span>Reported phase</span>${bandStyles.map(b=>`<span><i style="background:${b.colour}"></i>${esc(b.label)}</span>`).join('')}<span>Unshaded: unknown / no readings</span>`;element.querySelector('.chart-stage').before(legend);}
+  const tracks=statusTracks.map(track=>({...track,intervals:booleanIntervals(points,track.key,new Date(full[1]).toISOString(),track.maxGapMs ?? 90000)}));
+  let trackLegend;
+  if(tracks.length){trackLegend=document.createElement('div');trackLegend.className='chart-status-legend';trackLegend.innerHTML=tracks.map(track=>`<span>${esc(track.label)}</span><span><i style="background:${esc(track.colour)}"></i>On</span><span><i class="chart-status-off"></i>Off</span><span><i class="chart-status-unknown"></i>Not reported</span>`).join('');element.querySelector('.chart-stage').before(trackLegend);}
   const numberFormats=new Map();
   const number=(value,digits=2)=>{if(!Number.isFinite(value))return 'Not reported';if(!numberFormats.has(digits))numberFormats.set(digits,new Intl.NumberFormat('en-GB',{maximumFractionDigits:digits}));return numberFormats.get(digits).format(value);};
   function tooltipEntries(row){
     const entries=series.filter(s=>!hidden.has(s.key)).map(s=>[s.label,`${number(row[s.key],s.digits ?? 2)}${Number.isFinite(row[s.key])?' '+(s.unit || unit):''}`,s]);
     if(kind==='bar'&&row.end)entries.unshift(['Interval ends',stamp(row.end)]);
     if(bandStyles.length&&!row.thermal_context){const band=timeBands.find(b=>row.time>=b.from&&row.time<b.until);entries.push(['Reported phase',styles.get(band?.phase)?.label || 'Unknown / no readings']);}
+    entries.push(...tracks.map(track=>[track.label,row[track.key]===true?'On':row[track.key]===false?'Off':'Not reported']));
     entries.push(...extraTooltip(row));return entries;
   }
   const swatch=s=>s?`<i class="chart-tooltip-swatch" style="background:${esc(s.colour)};${s.dashed?'background:none;border-top:2px dashed '+esc(s.colour):''}"></i>`:'';
@@ -114,6 +134,11 @@ export function bindChart(element,{rows,series,start,end,timezone='Europe/London
     const xTicks=Array.from({length:tickCount},(_,i)=>{const t=range[0]+(range[1]-range[0])*i/(tickCount-1),px=x(t);return `<text x="${px}" y="${height-(longRange?24:10)}" text-anchor="${i===0?'start':i===tickCount-1?'end':'middle'}">${longRange?`<tspan x="${px}">${esc(dayStamp.format(t))}</tspan><tspan x="${px}" dy="14">${esc(tickStamp(t))}</tspan>`:esc(tickStamp(t))}</text>`;}).join('');
     const backgrounds=timeBands.filter(b=>b.until>range[0]&&b.from<range[1]&&styles.has(b.phase)).map(b=>{const style=styles.get(b.phase),a=x(Math.max(range[0],b.from)),z=x(Math.min(range[1],b.until));return `<rect aria-hidden="true" class="chart-phase-band" x="${a}" y="${top}" width="${z-a}" height="${height-top-bottom}" fill="${style.colour}" fill-opacity="0.13"/>`;}).join('');
     const referenceMarks=references.map(ref=>`<line x1="${left}" x2="${width-right}" y1="${y(ref.value)}" y2="${y(ref.value)}" stroke="${ref.colour || '#8a6a35'}" stroke-dasharray="6 5"/><text x="${width-right-5}" y="${y(ref.value)-6}" text-anchor="end">${esc(ref.label)}</text>`).join('');
+    const statusMarks=tracks.map((track,i)=>{
+      const trackY=height-bottom+12+i*28;
+      const intervals=track.intervals.filter(b=>b.until>range[0]&&b.from<range[1]).map(b=>{const a=x(Math.max(range[0],b.from)),z=x(Math.min(range[1],b.until));return `<rect class="chart-status-interval" data-status="${b.value?'on':'off'}" x="${a}" y="${trackY}" width="${z-a}" height="12" fill="${b.value?esc(track.colour):'#d6e0e7'}"/>`;}).join('');
+      return `<g data-status-track="${esc(track.key)}" aria-label="${esc(track.label)}: On, Off or Not reported"><text x="${left-9}" y="${trackY+10}" text-anchor="end">${esc(track.label)}</text><rect x="${left}" y="${trackY}" width="${width-left-right}" height="12" fill="url(#${element.id}-unknown)"/>${intervals}</g>`;
+    }).join('');
     let marks='';
     for(const s of enabled){
       if(kind==='bar'){
@@ -128,7 +153,7 @@ export function bindChart(element,{rows,series,start,end,timezone='Europe/London
     }
     const emptyText=!valueCount?`<text x="${width/2}" y="${height/2}" text-anchor="middle">No reported readings in this view</text>`:'';
     svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.style.height=`${height}px`;
-    svg.innerHTML=`<defs><clipPath id="${element.id}-clip"><rect x="${left}" y="${top}" width="${width-left-right}" height="${height-top-bottom}"/></clipPath></defs><g clip-path="url(#${element.id}-clip)">${backgrounds}</g>${ticks}${rightTicks}${xTicks}<text x="${left}" y="14">${esc(unit)}</text><g clip-path="url(#${element.id}-clip)">${referenceMarks}${marks}</g>${emptyText}<line class="chart-crosshair" x1="0" x2="0" y1="${top}" y2="${height-bottom}" visibility="hidden"/><rect class="chart-selection" x="0" y="${top}" width="0" height="${height-top-bottom}" visibility="hidden"/>`;
+    svg.innerHTML=`<defs><clipPath id="${element.id}-clip"><rect x="${left}" y="${top}" width="${width-left-right}" height="${height-top-bottom}"/></clipPath>${tracks.length?`<pattern id="${element.id}-unknown" patternUnits="userSpaceOnUse" width="6" height="6"><rect width="6" height="6" fill="#f6f8fa"/><path d="M-1,1 L1,-1 M0,6 L6,0 M5,7 L7,5" stroke="#9aa8b3" stroke-width="1"/></pattern>`:''}</defs><g clip-path="url(#${element.id}-clip)">${backgrounds}</g>${ticks}${rightTicks}${xTicks}<text x="${left}" y="14">${esc(unit)}</text><g clip-path="url(#${element.id}-clip)">${referenceMarks}${marks}</g>${statusMarks}${emptyText}<line class="chart-crosshair" x1="0" x2="0" y1="${top}" y2="${height-bottom+trackSpace}" visibility="hidden"/><rect class="chart-selection" x="0" y="${top}" width="0" height="${height-top-bottom+trackSpace}" visibility="hidden"/>`;
     element.querySelector('.chart-range').textContent=`${stamp(range[0])} – ${stamp(range[1])} · ${visible.length.toLocaleString()} readings`;
     const reset=element.querySelector('[data-chart-action="reset"]');if(reset)reset.disabled=!state.zoomed;
   }
@@ -171,7 +196,7 @@ export function bindChart(element,{rows,series,start,end,timezone='Europe/London
     if(action==='reset')setRange([...full],false);
     if(action==='out'){const span=range[1]-range[0];setRange([range[0]-span/2,range[1]+span/2]);}
     if(action==='csv'){
-      const columns=[['at','Timestamp'],...series.map(s=>[s.key,`${s.label} (${s.unit || unit})`]),...extraExport];
+      const columns=[['at','Timestamp'],...series.map(s=>[s.key,`${s.label} (${s.unit || unit})`]),...tracks.map(track=>[track.key,track.label]),...extraExport];
       const quote=value=>`"${String(value ?? '').replaceAll('"','""')}"`;
       const csv=[columns.map(([,label])=>quote(label)).join(','),...visible.map(row=>columns.map(([key])=>quote(row[key])).join(','))].join('\r\n');
       const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),link=document.createElement('a');link.href=url;link.download=`cold-harbour-${element.id}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -186,5 +211,5 @@ export function bindChart(element,{rows,series,start,end,timezone='Europe/London
       draw();if(inspecting)show(selected);
     }
   });resize.observe(plotArea);
-  const destroy=()=>{resize.disconnect();lineLabel.remove();teardowns.delete(destroy);};teardowns.add(destroy);return {destroy,setView:(next,zoomed=true)=>setRange(next,zoomed,false)};
+  const destroy=()=>{resize.disconnect();lineLabel.remove();trackLegend?.remove();teardowns.delete(destroy);};teardowns.add(destroy);return {destroy,setView:(next,zoomed=true)=>setRange(next,zoomed,false)};
 }

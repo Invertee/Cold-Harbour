@@ -1,5 +1,6 @@
 import {localParts} from './time.js';
 import {defaultWeatherPlan} from './smart-thermostat.js';
+import {HttpError} from './http.js';
 
 export const defaultHeatingPlan={version:2,weather:defaultWeatherPlan,houseTarget:20,awayTarget:16,scheduleOverride:null,setpointOverride:null,manualActivity:'auto',occupancyMode:'auto',people:[],awayDelayMinutes:10,activities:[
  {id:'home',name:'At home',targetMode:'house',offset:0,rooms:{}},
@@ -54,6 +55,27 @@ export function groupHeatingSchedules(previous){
   for(const day of days)plan[key][day]=structuredClone(slots);
  }
  return plan;
+}
+
+// Keep the heating boundaries. Move each old budget release into the heating
+// period containing its start, for both occupancy schedules and day groups.
+export function integrateGasBudget(previous,budget){
+ const plan=structuredClone(previous),{periods=[],...settings}=budget;
+ let end=0;
+ if(!Array.isArray(periods)||periods.length>12)throw new HttpError(400,'Invalid legacy gas budget windows.');
+ for(const p of periods){
+  if(!p||typeof p.name!=='string'||!p.name.trim()||p.name.length>60||!Number.isInteger(p.start)||!Number.isInteger(p.end)||p.start<end||p.start<0||p.end>1440||p.end<=p.start||!Number.isFinite(p.share)||p.share<1||p.share>100)throw new HttpError(400,'Invalid legacy gas budget window.');
+  end=p.end;
+ }
+ if(periods.length&&Math.abs(periods.reduce((sum,p)=>sum+p.share,0)-100)>0.001)throw new HttpError(400,'Legacy gas budget shares must total 100%.');
+ if(periods.length)for(const key of ['timeline','awayTimeline'])for(const slots of plan[key]){
+  if(slots.some(slot=>slot.gasShare>0))continue;
+  for(const period of periods){
+   const slot=[...slots].reverse().find(slot=>slot.start<=period.start);
+   slot.gasShare=Math.round(((slot.gasShare || 0)+period.share)*1000)/1000;
+  }
+ }
+ return {plan,settings};
 }
 
 export function scheduledRoomTarget(room,priority,settings,profile={}){

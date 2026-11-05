@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'n
 import { join } from 'node:path';
 import { randomBytes, createCipheriv, createDecipheriv, randomUUID } from 'node:crypto';
 import { defaults, sampleRooms, sampleRules } from './defaults.js';
-import {migrateHeatingPlan,upgradeHeatingPlan,groupHeatingSchedules} from './heating-plan.js';
+import {migrateHeatingPlan,upgradeHeatingPlan,groupHeatingSchedules,integrateGasBudget} from './heating-plan.js';
 import {defaultWeatherPlan} from './smart-thermostat.js';
 
 export function createStore(directory) {
@@ -171,6 +171,22 @@ export function createStore(directory) {
     try{
       db.prepare('INSERT OR IGNORE INTO settings VALUES (?,?)').run('notifications',JSON.stringify(defaults.notifications));
       db.prepare('INSERT INTO migrations VALUES (12)').run();
+      db.exec('COMMIT');
+    }catch(error){db.exec('ROLLBACK');throw error;}
+  }
+  if(!db.prepare('SELECT 1 FROM migrations WHERE version=13').get()){
+    db.exec('BEGIN');
+    try{
+      const previous=JSON.parse(db.prepare("SELECT value FROM settings WHERE section='heatingPlan'").get().value);
+      const budget={...defaults.gasBudget,...JSON.parse(db.prepare("SELECT value FROM settings WHERE section='gasBudget'").get()?.value || '{}')};
+      if(budget.periods?.length){
+        db.prepare('INSERT OR IGNORE INTO settings VALUES (?,?)').run('gasBudgetBeforeHeatingSchedule',JSON.stringify(budget));
+        db.prepare('INSERT OR IGNORE INTO settings VALUES (?,?)').run('heatingPlanBeforeGasBudget',JSON.stringify(previous));
+      }
+      const {plan,settings}=integrateGasBudget(previous,budget);
+      db.prepare('INSERT OR REPLACE INTO settings VALUES (?,?)').run('heatingPlan',JSON.stringify(plan));
+      db.prepare('INSERT OR REPLACE INTO settings VALUES (?,?)').run('gasBudget',JSON.stringify(settings));
+      db.prepare('INSERT INTO migrations VALUES (13)').run();
       db.exec('COMMIT');
     }catch(error){db.exec('ROLLBACK');throw error;}
   }

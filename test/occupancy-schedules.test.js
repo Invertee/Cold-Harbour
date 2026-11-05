@@ -55,7 +55,7 @@ test('migration archives individual days, preserves credentials and room mapping
 });
 test('schedule dialog has occupancy tabs and only weekday/weekend rows with distinct periods and priorities',()=>{
  const p=config().heatingPlan,home=scheduleMarkup(p,rooms),away=scheduleMarkup(p,rooms,undefined,'away');
- for(const html of [home,away]){assert.match(html,/Someone home/);assert.match(html,/Everyone away/);assert.equal((html.match(/class="routine-track"/g) || []).length,2);assert.match(html,/Weekdays/);assert.match(html,/Weekends/);assert.doesNotMatch(html,/Individual day|schedule-day|Monday|Sunday/);assert.match(html,/value="high"/);assert.match(html,/value="low"/);assert.match(html,/Save schedule saves changes to both/);}
+ for(const html of [home,away]){assert.match(html,/Someone home/);assert.match(html,/Everyone away/);assert.equal((html.match(/class="routine-track"/g) || []).length,2);assert.match(html,/Weekdays/);assert.match(html,/Weekends/);assert.doesNotMatch(html,/Individual day|schedule-day|Monday|Sunday/);assert.match(html,/value="high"/);assert.match(html,/value="low"/);assert.match(html,/Save heating plan saves changes across both/);}
  assert.match(home,/Home daytime/);assert.doesNotMatch(home.split('<form')[0],/Away morning/);assert.match(away,/Away morning/);assert.match(away,/Away afternoon/);assert.match(away,/1:00 pm/);assert.match(away,/data-schedule-occupancy="away" class="selected" aria-pressed="true"/);
 });
 test('HTTP saves preserve separate occupancy schedules across restarts and still never grant remote authority',async t=>{

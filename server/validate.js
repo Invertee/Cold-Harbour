@@ -47,15 +47,6 @@ export function validateConfig(section, input, current) {
     if(!['monitor','pause'].includes(result.action))fail('Choose whether to monitor or pause heating at the budget.');
     num(result.dailyLimit,'Daily gas budget',0.01,10000);
     num(result.staleMinutes,'Gas reading freshness',5,360);
-    if(!Array.isArray(result.periods)||result.periods.length>12)fail('Choose up to twelve heating windows.');
-    let previousEnd=0;
-    result.periods=result.periods.map(period=>{
-      if(!period||typeof period!=='object'||Array.isArray(period)||Object.keys(period).some(key=>!['name','start','end','share'].includes(key)))fail('Choose valid heating windows.');
-      const p={name:str(period.name,'Heating window name',60),start:num(period.start,'Heating window start',0,1439),end:num(period.end,'Heating window end',1,1440),share:num(period.share,'Heating window budget share',1,100)};
-      if(!p.name||!Number.isInteger(p.start)||!Number.isInteger(p.end)||p.start<previousEnd||p.end<=p.start)fail('Heating windows must be in time order and must not overlap.');
-      previousEnd=p.end;return p;
-    });
-    if(result.periods.length&&Math.abs(result.periods.reduce((sum,p)=>sum+p.share,0)-100)>0.001)fail('Heating window shares must add up to 100%.');
   } else if (section === 'heating') {
     if (!activities.includes(result.activity)) fail('Invalid household activity.');
     num(result.staleMinutes,'Sensor freshness',5,180);
@@ -167,7 +158,10 @@ export function validateHeatingPlan(input){
     const days=input[key];if(!Array.isArray(days)||days.length!==7)fail('A timeline needs all seven days.');
     plan[key]=days.map(slots=>{
       if(!Array.isArray(slots)||!slots.length||slots.length>96)fail('Each day needs between one and 96 periods.');
-      let previous=-1;return slots.map(slot=>{if(!object(slot)||!Number.isInteger(slot.start)||slot.start<0||slot.start>1439||slot.start<=previous||previous===-1&&slot.start!==0||!ids.has(slot.activityId))fail('Periods must start at midnight, be in time order and use an existing period.');previous=slot.start;return {start:slot.start,activityId:slot.activityId};});
+      let previous=-1;const periods=slots.map(slot=>{if(!object(slot)||!Number.isInteger(slot.start)||slot.start<0||slot.start>1439||slot.start<=previous||previous===-1&&slot.start!==0||!ids.has(slot.activityId))fail('Periods must start at midnight, be in time order and use an existing period.');previous=slot.start;return {start:slot.start,activityId:slot.activityId,...(slot.gasShare!==undefined?{gasShare:num(slot.gasShare,'Period gas budget share',0,100)}:{})};});
+      const total=periods.reduce((sum,slot)=>sum+(slot.gasShare || 0),0);
+      if(total>0&&Math.abs(total-100)>0.001)fail('Gas budget shares must total 100% for each home/away weekday or weekend schedule, or all be zero for an all-day budget.');
+      return periods;
     });
   }
   return groupHeatingSchedules(plan);
