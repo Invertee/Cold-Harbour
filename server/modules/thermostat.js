@@ -1,18 +1,19 @@
 import {HttpError} from '../http.js';
+import {requestedOpening,roomThresholds,roomControl} from '../../public/heating-model.js';
 
 const clamp=(n,low,high)=>Math.max(low,Math.min(high,n));
-// Initial proportional allocation. This is requested travel, not measured flow or kW.
+// Requested travel from the room response, not measured water flow or kW.
 export function valvePlan(room){
- const opening=room.fresh&&room.callingForHeat?clamp(Math.ceil(Math.max(0,room.deficit)/2*20)*5,10,100):0;
- return {roomId:room.id,entityId:room.radiatorEntity,opening,closing:100,
+ const opening=requestedOpening(room);
+ return {roomId:room.id,entityId:room.radiatorEntity,opening,closing:100,...roomThresholds(room),response:roomControl(room),
   roomTarget:room.target,deviceTarget:opening?Math.min(room.target+5,Math.max(room.target+3,(room.radiator?.currentTemperature ?? room.current)+1)):room.target,
-  reason:!room.fresh?'Room reading unavailable':opening?`${room.priority==='high'?'Comfort':'Setback'} demand`:'Room target satisfied'};
+  reason:!room.fresh?'Room reading unavailable':room.budgetPaused?'Paused by gas budget':opening?`${room.priority==='high'?'Comfort':'Setback'} demand`:room.coasting?'Coasting to target':'Room target satisfied'};
 }
 
 export function createThermostat(context,summary){
  const {store,ha}=context,attempts=new Map();let busy=false,epoch=0;
  const mode=()=>store.config().thermostat?.mode || 'planning';
- const fingerprint=()=>JSON.stringify([ha.generation,store.config().heatingPlan,store.config().boiler.deviceId,store.list('rooms')]);
+ const fingerprint=()=>JSON.stringify([ha.generation,store.config().heatingPlan,store.config().gasBudget,store.config().boiler.deviceId,store.list('rooms')]);
  function inspect(now=Date.now(),data=summary(now),boiler=context.boiler?.status(now)){
   const active=mode()==='active',t=boiler?.telemetry || {},checks=[];
   const check=(id,label,ok,detail)=>checks.push({id,label,ok:Boolean(ok),detail});
@@ -36,8 +37,8 @@ export function createThermostat(context,summary){
   check('valves','TRVZB controls available',valves.every(v=>v.ready),'Each mapped TRV needs enabled opening/closing entities and its Adaptive mode switch.');
   const ready=checks.every(c=>c.ok),confirmed=valves.every(v=>v.confirmed),errors=valves.some(v=>v.error);
   return {mode:mode(),active,ready,checks,valves,canGrant:active&&ready&&confirmed&&!errors,
-   state:!active?'planning':!ready?'waiting':errors?'valve-error':!confirmed?'preparing':'active',
-   reason:!active?'Planning only · no heating or radiator commands':!ready?checks.find(c=>!c.ok).detail:errors?'Radiator command failed; heat is held while the settings are retried.':!confirmed?'Preparing radiator settings; boiler heat is held until Home Assistant reports them.':'Coordinated boiler and radiator control',
+   state:!active?'planning':!ready?'waiting':errors?'valve-error':!confirmed?'preparing':data.budget?.paused&&!data.budget.frostOverride?'budget-paused':'active',
+   reason:!active?'Planning only · no heating or radiator commands':!ready?checks.find(c=>!c.ok).detail:errors?'Radiator command failed; heat is held while the settings are retried.':!confirmed?'Preparing radiator settings; boiler heat is held until Home Assistant reports them.':data.budget?.frostOverride?`${data.smartPlan.reason} Gas budget pause is overridden for frost protection.`:data.budget?.paused?data.budget.reason:'Coordinated boiler and radiator control',
    flowC:ready&&data.smartPlan?.heat?Number(clamp(data.smartPlan.flowC,lower,upper).toFixed(1)):0,
    selectedEspMode:boiler?.selectedMode || null,reportedRemote:Boolean(boiler?.connected&&t.remote_active),leaseSeconds:90};
  }
@@ -74,7 +75,7 @@ export function createThermostat(context,summary){
    const status=inspect(now,data,boiler);
    if(!status.active||!status.ready)return {authority:'pid',enabled:false,flow_c:0,lease_s:0,reason:status.reason};
    const enabled=Boolean(status.canGrant&&data.smartPlan.heat);
-   return {authority:'remote',enabled,flow_c:enabled?status.flowC:0,lease_s:90,reason:enabled?data.smartPlan.reason:status.canGrant?'Room targets satisfied':status.reason};
+   return {authority:'remote',enabled,flow_c:enabled?status.flowC:0,lease_s:90,reason:status.canGrant?data.smartPlan.reason:status.reason};
   },
  };
 }

@@ -151,6 +151,10 @@ one_wire:
     pin: GPIO05
 
 sensor:
+  - platform: wifi_signal
+    name: Wi-Fi Signal
+    entity_category: diagnostic
+    update_interval: 30s
   - platform: dallas_temp
     id: thermostat_unit_temp
     name: Wall Unit Temperature

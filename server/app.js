@@ -26,13 +26,15 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
   const installedModules = [energyModule,heatingModule,boilerModule,...modules];
   for (const module of installedModules) module.register({route,context});
   registerBackups({route,context});
-  let ticking = null, timer, lastPrune = 0,closed = false;
+  let ticking = null, timer, lastPrune = 0,closed = false,pollFailures=0;
   async function tick() {
     if (closed) return;
     if (ticking) return ticking;
     ticking = (async()=>{
-      const now = Date.now();
       await ha.poll();
+      const now = Date.now();
+      captureHomeAssistantEnergy(context,now);
+      context.gasBudget.capture(now);
       await context.radiators.sync();
       await context.thermostat.sync();
       const {homeAssistant} = store.config();
@@ -40,7 +42,6 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
         const value = powerReading(ha.states.find(s=>s.entity_id === homeAssistant.powerEntity));
         if (value) store.db.prepare('INSERT OR REPLACE INTO readings VALUES (?,?,?)').run(`ha:${homeAssistant.powerEntity}`,value.at,value.watts);
       }
-      captureHomeAssistantEnergy(context,now);
       context.heatingHistory.capture(now);
       context.heatingOutlook.read(now);
       if (now-lastPrune>3600000) { store.prune(); lastPrune=now; }
@@ -62,7 +63,7 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
   route('POST','/api/refresh',async()=>{ await tick(); return {ha:ha.status}; });
   route('POST','/api/settings',async({body})=>{
     const section = str(body.section,'Section',40);
-    const current = ['general','homeAssistant','notifications','energy','heating','heatingPlan','boiler'].includes(section) ? store.config()[section] : null;
+    const current = ['general','homeAssistant','notifications','energy','gasBudget','heating','heatingPlan','boiler'].includes(section) ? store.config()[section] : null;
     if (!current || !body.values || typeof body.values !== 'object' || Array.isArray(body.values)) throw new HttpError(400,'Choose a settings section and values.');
     const input = {...body.values};
     const secrets = [];
@@ -123,7 +124,16 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
   const deviceServer=createServer(deviceHandler(context));
   deviceServer.requestTimeout=10000;deviceServer.headersTimeout=5000;
   return {server,deviceServer,context,tick,
-    startPolling() { void tick().catch(err=>console.error('Cold Harbour polling failed:',err.name)); timer=setInterval(()=>void tick().catch(err=>console.error('Cold Harbour polling failed:',err.name)),15000);timer.unref(); },
-    async close() { closed=true;clearInterval(timer);await ticking;await Promise.all([new Promise(resolve=>server.close(resolve)),new Promise(resolve=>deviceServer.close(resolve))]);store.close(); },
+    startPolling() {
+      clearTimeout(timer);
+      const poll=async()=>{
+        try{await tick();}catch(err){console.error('Cold Harbour polling failed:',err.name);}
+        if(closed)return;
+        const delay=ha.status.connected?(pollFailures=0,5000):Math.min(10000,2000*2**Math.min(pollFailures++,3));
+        timer=setTimeout(()=>void poll(),delay);timer.unref();
+      };
+      void poll();
+    },
+    async close() { closed=true;clearTimeout(timer);await ticking;await Promise.all([new Promise(resolve=>server.close(resolve)),new Promise(resolve=>deviceServer.close(resolve))]);store.close(); },
   };
 }

@@ -174,9 +174,22 @@ export function createStore(directory) {
       db.exec('COMMIT');
     }catch(error){db.exec('ROLLBACK');throw error;}
   }
+  db.exec(`CREATE TABLE IF NOT EXISTS gas_samples (
+    source TEXT NOT NULL,day TEXT NOT NULL,at TEXT NOT NULL,kwh REAL,cost REAL,usage_at TEXT,cost_at TEXT,
+    PRIMARY KEY(source,at));
+    CREATE INDEX IF NOT EXISTS gas_samples_day ON gas_samples(source,day);`);
   return {
     db,
-    config() { return Object.fromEntries(db.prepare('SELECT * FROM settings').all().filter(row=>Object.hasOwn(defaults,row.section)).map(row => {const saved=JSON.parse(row.value);return [row.section,Object.fromEntries(Object.entries(defaults[row.section]).map(([key,value])=>[key,saved[key] ?? value]))];})); },
+    config() {
+      const config=structuredClone(defaults);
+      for(const row of db.prepare('SELECT * FROM settings').all()){
+        if(!Object.hasOwn(defaults,row.section))continue;
+        const saved=JSON.parse(row.value);
+        config[row.section]=Object.fromEntries(Object.entries(defaults[row.section]).map(([key,value])=>[key,saved[key] ?? value]));
+      }
+      config.heatingPlan.weather={...defaultWeatherPlan,...config.heatingPlan.weather};
+      return config;
+    },
     save(section, value) { db.prepare('INSERT OR REPLACE INTO settings VALUES (?,?)').run(section, JSON.stringify(value)); },
     secret(name, value) {
       if (value !== undefined) {
@@ -221,6 +234,7 @@ export function createStore(directory) {
       db.prepare('DELETE FROM boiler_exchanges WHERE at < ?').run(new Date(now-7*86400000).toISOString());
       db.prepare('DELETE FROM boiler_frames WHERE received_at < ?').run(new Date(now-86400000).toISOString());
       db.prepare('DELETE FROM heating_samples WHERE at < ?').run(new Date(now-90*86400000).toISOString());
+      db.prepare('DELETE FROM gas_samples WHERE at < ?').run(new Date(now-90*86400000).toISOString());
     },
     close() { db.close(); },
   };

@@ -14,7 +14,7 @@ const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:
 test('reads recover from a plain-text gateway error and retain the Home Assistant ingress URL',async t=>{
  let calls=0;
  client(t,async(url,options)=>{
-  assert.equal(url.href,'https://home.test/api/hassio_ingress/session/api/heating');assert.ok(options.signal);assert.equal(options.headers['X-MODS-Request'],'1');
+  assert.equal(url.href,'https://home.test/api/hassio_ingress/session/api/heating');assert.ok(options.signal);assert.equal(options.headers['X-MODS-Request'],'1');assert.equal(options.cache,'no-store');
   return ++calls===1?new Response('502: Bad Gateway',{status:502}):json({rooms:[]});
  });
  assert.deepEqual(await api('heating'),{rooms:[]});assert.equal(calls,2);
@@ -53,9 +53,10 @@ test('body-read failures recover and caller cancellation is not retried',async t
 
 test('requests have a timeout and stalled changes are never submitted again',async t=>{
  let calls=0;client(t,async(_url,{signal})=>{calls++;assert.ok(signal.aborted);throw signal.reason;});
- t.mock.method(AbortSignal,'timeout',milliseconds=>{assert.equal(milliseconds,20000);return AbortSignal.abort(new DOMException('Timed out','TimeoutError'));});
+ const timeouts=[];t.mock.method(AbortSignal,'timeout',milliseconds=>{timeouts.push(milliseconds);return AbortSignal.abort(new DOMException('Timed out','TimeoutError'));});
  await assert.rejects(api('heating'),/Connection interrupted/);assert.equal(calls,2);
  calls=0;await assert.rejects(api('heating/setpoint',{method:'POST',body:'{"target":21}'}),/Check whether your change was saved/);assert.equal(calls,1);
+ assert.deepEqual(timeouts,[8000,8000,20000]);
 });
 
 test('page refresh failures preserve readings, mark them stale, recover and keep navigation errors on the correct page',async t=>{
@@ -67,12 +68,13 @@ test('page refresh failures preserve readings, mark them stale, recover and keep
  const selectors=['#main','#navigation','#refresh','#breadcrumb-current','#system-status','#mode-pill','#today','#editor','.skip-link','#connection-notice','#retry'];
  const elements=Object.fromEntries(selectors.map(selector=>[selector,element()]));elements['#connection-notice'].hidden=true;
  globalThis.document={querySelector:selector=>elements[selector] || null,querySelectorAll:()=>[],hidden:false,activeElement:null};
- globalThis.window={addEventListener(){},scrollTo(){}};globalThis.location={href:'http://test.local/',hash:'#heating'};globalThis.history={replaceState(){}};
+ const listeners={};globalThis.window={addEventListener(event,callback){listeners[event]=callback;},scrollTo(){}};globalThis.document.addEventListener=(event,callback)=>{listeners[event]=callback;};globalThis.location={href:'http://test.local/',hash:'#heating'};globalThis.history={replaceState(){}};
  let poll;globalThis.setInterval=callback=>{poll=callback;return 1;};
- globalThis.fetch=async()=>json({thermostat:{mode:'active'},general:{timezone:'Europe/London'}});
+ const requests=[];globalThis.fetch=async(url,options)=>{requests.push({url:url.href,method:options.method || 'GET'});return json({thermostat:{mode:'active'},general:{timezone:'Europe/London'}});};
  let fail=false,reading=19,release;
  for(const module of modules){module.render=async()=>{if(fail)throw new Error('Cold Harbour is temporarily unavailable. Please try again.');return `Readings: ${reading}`;};module.bind=()=>{};}
- const {render}=await import('../public/app.js?recovery-test');await new Promise(resolve=>setImmediate(resolve));
+ const {render,resume}=await import('../public/app.js?recovery-test');await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(requests.some(r=>r.url.endsWith('/api/refresh')&&r.method==='POST'));for(const event of ['focus','pageshow','online','visibilitychange'])assert.equal(typeof listeners[event],'function');
  const main=elements['#main'],notice=elements['#connection-notice'],first=main.innerHTML;assert.match(first,/Readings: 19/);
  fail=true;await render({background:true});assert.equal(main.innerHTML,first);assert.equal(notice.hidden,false);assert.match(notice.innerHTML,/may be out of date/);assert.equal(elements['#system-status'].textContent,'Connection interrupted');
  fail=false;reading=20;globalThis.document.activeElement={tagName:'BUTTON',id:'retry'};poll();await new Promise(resolve=>setImmediate(resolve));assert.match(main.innerHTML,/Readings: 20/);assert.equal(notice.hidden,true);globalThis.document.activeElement=null;
@@ -85,4 +87,10 @@ test('page refresh failures preserve readings, mark them stale, recover and keep
  // Settings also recover automatically after an error, despite normally pausing refresh.
  fail=false;poll();await new Promise(resolve=>setImmediate(resolve));assert.match(main.innerHTML,/Readings: 20/);
  fail=true;await render({background:true});assert.equal(notice.hidden,false);fail=false;reading=21;poll();await new Promise(resolve=>setImmediate(resolve));assert.match(main.innerHTML,/Readings: 21/);assert.equal(notice.hidden,true);
+ // Resuming a page asks the server for a fresh HA snapshot, including Settings.
+ let clock=Date.now();t.mock.method(Date,'now',()=>clock);reading=22;const count=requests.filter(r=>r.method==='POST').length;await resume();assert.match(main.innerHTML,/Readings: 22/);assert.equal(requests.filter(r=>r.method==='POST').length,count+1);
+ // Returning while editing refreshes the source without losing unsaved fields.
+ clock+=2000;globalThis.document.activeElement={tagName:'INPUT'};reading=23;await resume();assert.match(main.innerHTML,/Readings: 22/);assert.equal(requests.filter(r=>r.method==='POST').length,count+2);
+ clock+=2000;globalThis.document.activeElement=null;listeners.online();await new Promise(resolve=>setImmediate(resolve));assert.match(main.innerHTML,/Readings: 23/);
+ globalThis.document.hidden=true;clock+=2000;reading=24;await resume();assert.match(main.innerHTML,/Readings: 23/);globalThis.document.hidden=false;
 });

@@ -27,6 +27,21 @@ test('Home Assistant connection only reads states and exposes no command method'
 test('old HA requests cannot repopulate states after connection changes',async t=>{
   const store=storeFixture(t);store.save('homeAssistant',{...store.config().homeAssistant,url:'http://ha.test'});store.secret('haToken','token');let finish;const ha=createHomeAssistant(store,()=>new Promise(resolve=>finish=resolve),async()=>[]);const pending=ha.poll();ha.invalidate();finish([{entity_id:'sensor.old'}]);await pending;assert.equal(ha.states.length,0);assert.equal(ha.status.connected,false);
 });
+
+test('Home Assistant recovers a transient state read and coalesces overlapping polls',async t=>{
+ const store=storeFixture(t);store.save('homeAssistant',{...store.config().homeAssistant,url:'http://ha.test'});store.secret('haToken','token');
+ let calls=0,finish;
+ const ha=createHomeAssistant(store,async(_url,options)=>{assert.equal(options.cache,'no-store');if(++calls===1)throw new Error('Temporary gateway failure');return new Promise(resolve=>finish=resolve);},async()=>[]);
+ const first=ha.poll(),second=ha.poll();await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,2);
+ finish([{entity_id:'sensor.office',state:'19'}]);await Promise.all([first,second]);assert.equal(calls,2);assert.equal(ha.status.connected,true);assert.equal(ha.states[0].state,'19');
+});
+
+test('a failed HA refresh marks retained readings offline and the next successful poll restores freshness',async t=>{
+ const store=storeFixture(t);store.save('homeAssistant',{...store.config().homeAssistant,url:'http://ha.test'});store.secret('haToken','token');let fail=false,calls=0;
+ const ha=createHomeAssistant(store,async()=>{calls++;if(fail)throw new Error('Offline');return [{entity_id:'sensor.office',state:'20'}];},async()=>[]);
+ await ha.poll();assert.equal(ha.status.connected,true);fail=true;await ha.poll();assert.equal(calls,3);assert.equal(ha.status.connected,false);assert.equal(ha.states.length,1);
+ fail=false;await ha.poll();assert.equal(ha.status.connected,true);assert.equal(ha.status.error,null);
+});
 test('power values honour units and reject unavailable values',()=>{const entity={state:'1.25',attributes:{unit_of_measurement:'kW'},last_reported:new Date().toISOString()};assert.equal(powerReading(entity).watts,1250);assert.equal(powerReading({...entity,state:'unavailable'}),null);assert.equal(powerReading({...entity,attributes:{unit_of_measurement:'kWh'}}),null);});
 test('live view stays empty without real data and never falls back to demo',t=>{
   const store=storeFixture(t);const data=energySummary({store,ha:{status:{}},octopus:{status:{}}});assert.equal(data.energySource,'homeAssistant');assert.equal(data.live,null);assert.equal(data.kwh,null);assert.equal(data.cost,null);assert.deepEqual(data.rows,[]);

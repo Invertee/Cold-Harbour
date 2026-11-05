@@ -45,8 +45,8 @@ export async function api(path,options={}) {
   for(let attempt=0;attempt<(reading?2:1);attempt++){
     try{
       let response;
-      const timeout=AbortSignal.timeout(20000),signal=options.signal?AbortSignal.any([options.signal,timeout]):timeout;
-      try{response=await fetch(new URL(`api/${path}`,new URL('./',location.href)),{...options,signal,headers:{'Content-Type':'application/json','X-MODS-Request':'1',...options.headers}});}
+      const timeout=AbortSignal.timeout(reading?8000:20000),signal=options.signal?AbortSignal.any([options.signal,timeout]):timeout;
+      try{response=await fetch(new URL(`api/${path}`,new URL('./',location.href)),{...options,cache:'no-store',signal,headers:{'Content-Type':'application/json','X-MODS-Request':'1',...options.headers}});}
       catch{
         if(options.signal?.aborted)throw failure('Request cancelled.');
         throw failure(reading?'Connection interrupted. Please try again.':'Connection interrupted. Check whether your change was saved before trying again.',true);

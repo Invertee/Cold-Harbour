@@ -3,12 +3,12 @@ import { modules } from './modules/registry.js';
 import { api,icon,toast,esc,empty } from './ui.js';
 
 const main=document.querySelector('#main');
-let generation=0,currentModule=null,displayedModule=null,pendingRenders=0,connectionInterrupted=false;
+let generation=0,currentModule=null,displayedModule=null,pendingRenders=0,connectionInterrupted=false,retryTimer=null,resumePending=false,lastResume=0;
 const ctx={config:null,reload:()=>render()};
 document.querySelector('#navigation').innerHTML=modules.map(module=>`<a href="#${module.id}" data-nav="${module.id}">${icon(module.icon)}<span>${module.label}</span></a>`).join('');
 document.querySelector('#refresh').innerHTML=icon('refresh');
 
-export async function render({background=false}={}) {
+export async function render({background=false,refresh=false}={}) {
   if(background&&pendingRenders)return;
   pendingRenders++;
   const version=++generation;
@@ -20,11 +20,15 @@ export async function render({background=false}={}) {
   document.querySelector('#breadcrumb-current').textContent=module.label;
   document.title=`${module.label} · Cold Harbour`;
   try {
+    if(refresh)await api('refresh',{method:'POST',body:'{}'});
     ctx.config=await api('settings');
     if(version!==generation)return;
     const html=await module.render(ctx);
     if(version!==generation)return;
+    const openDetails=displayedModule===module.id?[...main.querySelectorAll?.('details') || []].map((detail,index)=>detail.open?index:-1).filter(index=>index>=0):[];
     destroyCharts();main.innerHTML=`<h1 class="sr-only">${esc(module.label)}</h1>${html}`;currentModule=module.id;displayedModule=module.id;module.bind?.(ctx);
+    const details=[...main.querySelectorAll?.('details') || []];for(const index of openDetails)if(details[index])details[index].open=true;
+    clearTimeout(retryTimer);retryTimer=null;
     connectionInterrupted=false;document.querySelector('#connection-notice').hidden=true;
     document.querySelector('#system-status').textContent='Server online';
     const pill=document.querySelector('#mode-pill');pill.textContent=ctx.config.thermostat?.mode==='active'?'Smart Thermostat · Active selected':'Smart Thermostat · Planning';pill.className=ctx.config.thermostat?.mode==='active'?'pill amber':'pill green';pill.hidden=false;
@@ -39,12 +43,29 @@ export async function render({background=false}={}) {
       displayedModule=null;destroyCharts();main.innerHTML=empty('Unable to load data',`${esc(err.message)} We’ll retry automatically.`,'<button class="button" id="retry">Try again</button>');
     }
     document.querySelector('#retry').onclick=()=>render();document.querySelector('#system-status').textContent='Connection interrupted';
-  }finally{pendingRenders--;}
+    clearTimeout(retryTimer);retryTimer=setTimeout(()=>{retryTimer=null;if(canRefresh())render({background:true,refresh:true});},2000);
+  }finally{
+    pendingRenders--;
+    if(!pendingRenders&&resumePending){resumePending=false;void resume();}
+  }
+}
+function canRefresh(){return !document.hidden&&!document.querySelector('dialog[open],.interactive-chart[data-interacting="true"],.heating-hero[data-interacting="true"]')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName);}
+export async function resume(){
+  if(document.hidden)return;
+  if(pendingRenders){resumePending=true;return;}
+  if(Date.now()-lastResume<1000)return;
+  lastResume=Date.now();
+  if(canRefresh())return render({background:true,refresh:true});
+  // Fetch fresh source data during editing without discarding unsaved inputs.
+  try{await api('refresh',{method:'POST',body:'{}'});}catch{connectionInterrupted=true;document.querySelector('#system-status').textContent='Connection interrupted';}
 }
 window.addEventListener('hashchange',()=>{render();window.scrollTo({top:0});});
 document.querySelector('.skip-link').onclick=event=>{event.preventDefault();main.focus();main.scrollIntoView();};
 document.querySelector('#refresh').onclick=async event=>{const button=event.currentTarget;button.disabled=true;button.classList.add('spinning');try{await api('refresh',{method:'POST',body:'{}'});await render();toast('Home Assistant refreshed. ESP readings arrive every 30 seconds.');}catch(err){toast(err.message,true);}finally{button.disabled=false;button.classList.remove('spinning');}};
 document.querySelector('#editor').addEventListener('click',event=>{if(event.target===event.currentTarget){const bounds=event.currentTarget.getBoundingClientRect();if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)event.currentTarget.close();}});
 window.addEventListener('unhandledrejection',event=>{toast(event.reason?.message || 'That action could not be completed.',true);event.preventDefault();});
-setInterval(()=>{if(!document.hidden&&!document.querySelector('dialog[open],details[open],.interactive-chart[data-interacting="true"],.heating-hero[data-interacting="true"]')&&(currentModule!=='settings'||connectionInterrupted)&&(document.activeElement?.id==='retry'||!['INPUT','TEXTAREA','SELECT','BUTTON'].includes(document.activeElement?.tagName)))render({background:true});},15000);
-render();
+for(const event of ['focus','pageshow','online'])window.addEventListener(event,()=>void resume());
+document.addEventListener?.('visibilitychange',()=>{if(!document.hidden)void resume();});
+document.querySelector('#editor').addEventListener('close',()=>void resume());
+setInterval(()=>{if(canRefresh()&&(currentModule!=='settings'||connectionInterrupted))render({background:true,refresh:connectionInterrupted});},5000);
+render({refresh:true});

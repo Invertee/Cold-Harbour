@@ -10,38 +10,51 @@ export function connection(store) {
 }
 
 export function createHomeAssistant(store, request = fetchJson, registryRequest=readEntityRegistry) {
-  let states = [], fetchedAt = null, error = null, generation = 0,registry=[],registryAt=0,registryAttempt=0,registryError=null,captureBusy=false,temperatureUnit=null,unitsAt=0;
+  let states = [], fetchedAt = null, error = null, generation = 0,registry=[],registryAt=0,registryAttempt=0,registryError=null,captureBusy=false,temperatureUnit=null,unitsAt=0,polling=null;
   const forecasts=createWeatherForecasts({request,source:()=>{
     const weather=store.config().heatingPlan.weather,{url,token}=connection(store),entityId=weather.forecastEntityId || (weather.entityId?.startsWith('weather.')?weather.entityId:'');
     return {url,token,entityId,enabled:weather.enabled,generation,unit:states.find(s=>s.entity_id===entityId)?.attributes?.temperature_unit || temperatureUnit,connected:Boolean(fetchedAt)&&!error&&Date.now()-Date.parse(fetchedAt)<=45000};
   }});
   return {
-    get status() { return { connected: Boolean(fetchedAt) && !error, fetchedAt, error, configured: Boolean(connection(store).url && connection(store).token), supervisor: Boolean(process.env.SUPERVISOR_TOKEN) }; },
+    get status() { return { connected: Boolean(fetchedAt) && !error && Date.now()-Date.parse(fetchedAt)<=45000, fetchedAt, error, configured: Boolean(connection(store).url && connection(store).token), supervisor: Boolean(process.env.SUPERVISOR_TOKEN) }; },
     get states() { return states; },
     get temperatureUnit(){return temperatureUnit;},
     get generation(){return generation;},
     get forecasts(){return forecasts.status();},
     async pollForecasts(now=Date.now()){await forecasts.poll(now);},
-    invalidate() { generation++; forecasts.clear();states = []; fetchedAt = null; error = null;registry=[];registryAt=registryAttempt=0;registryError=null;temperatureUnit=null;unitsAt=0;this.presenceMemory?.clear();this.demandMemory?.clear();this.occupancyMemory={}; },
+    invalidate() { generation++;polling=null; forecasts.clear();states = []; fetchedAt = null; error = null;registry=[];registryAt=registryAttempt=0;registryError=null;temperatureUnit=null;unitsAt=0;this.presenceMemory?.clear();this.demandMemory?.clear();this.occupancyMemory={}; },
     async poll() {
+      if(polling)return polling;
+      const pending=this.fetchStates();polling=pending;
+      try{return await pending;}finally{if(polling===pending)polling=null;}
+    },
+    async fetchStates() {
       const { url,token } = connection(store);
       if (!url || !token) return;
       const version = generation;
       try {
-        const result = await request(`${url}/api/states`,{ headers: { Authorization: `Bearer ${token}` } });
+        let result;
+        for(let attempt=0;attempt<2;attempt++){
+          try{result=await request(`${url}/api/states`,{cache:'no-store',headers:{Authorization:`Bearer ${token}`}});break;}
+          catch(err){if(version!==generation||attempt===1)throw err;}
+        }
         if (version !== generation) return;
         if (!Array.isArray(result)) throw new Error('Home Assistant returned invalid entity data.');
         states = result; fetchedAt = new Date().toISOString(); error = null;
+        const extras=[];
         if(result.some(s=>/^(climate|weather)\./.test(s.entity_id)&&!['°C','°F'].includes(s.attributes?.temperature_unit || s.attributes?.unit_of_measurement))&&Date.now()-unitsAt>=60000){
           unitsAt=Date.now();
-          try{const config=await request(`${url}/api/config`,{headers:{Authorization:`Bearer ${token}`}});if(version!==generation)return;temperatureUnit=['°C','°F'].includes(config?.unit_system?.temperature)?config.unit_system.temperature:null;}catch{if(version===generation)temperatureUnit=null;}
+          extras.push((async()=>{try{const config=await request(`${url}/api/config`,{headers:{Authorization:`Bearer ${token}`}});if(version!==generation)return;temperatureUnit=['°C','°F'].includes(config?.unit_system?.temperature)?config.unit_system.temperature:null;}catch{if(version===generation)temperatureUnit=null;}})());
         }
         if(Date.now()-registryAttempt>=60000){
           registryAttempt=Date.now();
-          try{const entries=await registryRequest(url,token);if(version!==generation)return;registry=entries;registryAt=Date.now();registryError=null;}
-          catch{if(version===generation)registryError='Capture discovery unavailable. Use the switch on the ESPHome device page, or check Home Assistant permissions.';}
+          extras.push((async()=>{try{const entries=await registryRequest(url,token);if(version!==generation)return;registry=entries;registryAt=Date.now();registryError=null;}
+          catch{if(version===generation)registryError='Capture discovery unavailable. Use the switch on the ESPHome device page, or check Home Assistant permissions.';}})());
         }
-        await this.pollForecasts();
+        // Unit discovery can supply forecast units; run it beside registry
+        // discovery rather than serialising all optional network requests.
+        await Promise.allSettled(extras);
+        if(version===generation)await this.pollForecasts();
       } catch (err) { if (version === generation) error = err.message; }
     },
     radiatorContext(entityId,now=Date.now()){

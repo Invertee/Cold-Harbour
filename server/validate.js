@@ -1,6 +1,7 @@
 import { HttpError } from './http.js';
 import {defaultWeatherPlan} from './smart-thermostat.js';
 import {groupHeatingSchedules} from './heating-plan.js';
+import {defaultRoomControl} from '../public/heating-model.js';
 
 const fail = message => { throw new HttpError(400,message); };
 export const str = (value, label, max = 200) => typeof value === 'string' && value.length <= max ? value.trim() : fail(`${label} must be text (up to ${max} characters).`);
@@ -40,6 +41,21 @@ export function validateConfig(section, input, current) {
   } else if (section === 'energy') {
     for (const key of ['electricityMeter','gasMeter']) result[key] = str(result[key],'Meter',240);
     for (const key of Object.keys(result).filter(key=>!['electricityMeter','gasMeter'].includes(key))) result[key] = entity(result[key],'sensor');
+  } else if(section==='gasBudget') {
+    result.enabled=bool(result.enabled,'Gas budget');
+    if(!['kwh','cost'].includes(result.unit))fail('Choose a gas budget in kWh or pounds.');
+    if(!['monitor','pause'].includes(result.action))fail('Choose whether to monitor or pause heating at the budget.');
+    num(result.dailyLimit,'Daily gas budget',0.01,10000);
+    num(result.staleMinutes,'Gas reading freshness',5,360);
+    if(!Array.isArray(result.periods)||result.periods.length>12)fail('Choose up to twelve heating windows.');
+    let previousEnd=0;
+    result.periods=result.periods.map(period=>{
+      if(!period||typeof period!=='object'||Array.isArray(period)||Object.keys(period).some(key=>!['name','start','end','share'].includes(key)))fail('Choose valid heating windows.');
+      const p={name:str(period.name,'Heating window name',60),start:num(period.start,'Heating window start',0,1439),end:num(period.end,'Heating window end',1,1440),share:num(period.share,'Heating window budget share',1,100)};
+      if(!p.name||!Number.isInteger(p.start)||!Number.isInteger(p.end)||p.start<previousEnd||p.end<=p.start)fail('Heating windows must be in time order and must not overlap.');
+      previousEnd=p.end;return p;
+    });
+    if(result.periods.length&&Math.abs(result.periods.reduce((sum,p)=>sum+p.share,0)-100)>0.001)fail('Heating window shares must add up to 100%.');
   } else if (section === 'heating') {
     if (!activities.includes(result.activity)) fail('Invalid household activity.');
     num(result.staleMinutes,'Sensor freshness',5,180);
@@ -66,6 +82,16 @@ export function validateRoom(input) {
   room.awayOffset=num(input.awayOffset ?? room.eco-16,'Room low temperature offset',-15,15);
   if (room.eco > room.comfort) fail('Eco temperature must not exceed comfort temperature.');
   room.radiatorEntity = entity(input.radiatorEntity || '', 'climate');
+  if(input.heatControl!==undefined&&(!input.heatControl||typeof input.heatControl!=='object'||Array.isArray(input.heatControl)))fail('Choose valid room heating controls.');
+  const control={...defaultRoomControl,...input.heatControl};
+  if(Object.keys(control).some(key=>!Object.hasOwn(defaultRoomControl,key)))fail('Unknown room heating control.');
+  room.heatControl={startBelow:num(control.startBelow,'Reopen shortfall',0,3),stopBelow:num(control.stopBelow,'Coast before target',0,1.5),fullOpenBelow:num(control.fullOpenBelow,'Full opening shortfall',0.1,6),minOpening:num(control.minOpening,'Minimum valve opening',5,100),maxOpening:num(control.maxOpening,'Maximum valve opening',5,100),openingMode:control.openingMode,fixedOpening:num(control.fixedOpening,'Fixed valve opening',5,100)};
+  if(control.startBelow<=control.stopBelow)fail('Reopen shortfall must be greater than the coast setting.');
+  if(control.fullOpenBelow<=control.stopBelow)fail('Full opening shortfall must be greater than the coast setting.');
+  if(!['proportional','fixed'].includes(control.openingMode))fail('Choose proportional or fixed valve opening.');
+  if(control.minOpening>control.maxOpening)fail('Maximum valve opening must be at least the minimum opening.');
+  if([control.minOpening,control.maxOpening,control.fixedOpening].some(n=>!Number.isInteger(n)||n%5))fail('Valve openings must use 5% steps.');
+  if(control.openingMode==='fixed'&&(control.fixedOpening<control.minOpening||control.fixedOpening>control.maxOpening))fail('Fixed opening must be between the minimum and maximum opening.');
   room.presenceMode = input.presenceMode ?? 'priority';
   if (!['priority','comfort'].includes(room.presenceMode)) fail('Choose how presence affects this room.');
   room.presenceHoldMinutes = num(input.presenceHoldMinutes ?? 20,'Presence hold time',0,180);
@@ -112,6 +138,7 @@ export function validateHeatingPlan(input){
   if(!object(weather)||Object.keys(weather).some(key=>!Object.hasOwn(defaultWeatherPlan,key)))fail('Choose valid weather planning settings.');
   const weatherEntity=entity(weather.entityId);if(weatherEntity&&!/^(weather|sensor)\./.test(weatherEntity))fail('Choose a weather entity or outside temperature sensor.');
   plan.weather={enabled:bool(weather.enabled,'Weather planning'),entityId:weatherEntity,forecastEntityId:entity(weather.forecastEntityId,'weather'),staleMinutes:num(weather.staleMinutes,'Weather freshness',15,360),designOutdoor:num(weather.designOutdoor,'Cold design temperature',-30,0),minFlow:num(weather.minFlow,'Minimum planned flow',25,60),maxFlow:num(weather.maxFlow,'Maximum planned flow',30,75),deficitGain:num(weather.deficitGain,'Room correction',0,15),maxPreheatMinutes:num(weather.maxPreheatMinutes,'Maximum planned warm-up',15,360)};
+  Object.assign(plan.weather,{flowOffset:num(weather.flowOffset,'Starting flow adjustment',-20,20),curveExponent:num(weather.curveExponent,'Heating curve shape',0.25,3),taperBand:num(weather.taperBand,'Near-target taper band',0,5)});
   if(plan.weather.maxFlow<plan.weather.minFlow)fail('Maximum flow must be at least the minimum flow.');
   if(!['auto','home','away'].includes(plan.occupancyMode))fail('Choose automatic, home or away occupancy.');
   if(!Array.isArray(input.people)||input.people.length>8)fail('Choose up to eight household people.');

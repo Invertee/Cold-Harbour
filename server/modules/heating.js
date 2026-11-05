@@ -7,6 +7,7 @@ import {HttpError} from '../http.js';
 import {smartThermostatPlan} from '../smart-thermostat.js';
 import {createHeatingOutlook} from './heating-outlook.js';
 import {createThermostat,valvePlan} from './thermostat.js';
+import {roomControl} from '../../public/heating-model.js';
 
 const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function roomPresence(room,byId,now,maxAge,memory) {
@@ -66,8 +67,9 @@ export function evaluateHeating({rooms,rules,states,config,now=Date.now(),presen
     const target = scheduled?scheduledRoomTarget(room,priority,config.heatingPlan,{...plan.profile,houseTarget:plan.activeTarget}):plan?presenceSetback?Math.min(planned,room.eco):planned:away ? room.eco : matching?.target ?? baseTarget;
     const reason = scheduled?`${plan.override?`${plan.profile.name} · sensor override`:`${plan.occupancy.effective==='away'?'Away':'Home'} schedule`} · ${priority==='high'?'comfort':'low temperature'}${priority==='high'?' target':''}`:plan?`${plan.profile.name}${presenceSetback?' · room Eco setback':occupied?' · room in use':''}`:away ? 'Away setback' : matching?.name || (occupied ? presence.held ? 'Recent presence' : 'Room in use' : presenceControlsTarget && presence.unknown && activity!=='sleep' ? 'Presence unavailable · comfort retained' : presenceControlsTarget ? 'No presence · Eco target' : activity==='sleep' ? 'Sleep setback' : 'Base comfort');
     const deficit = current === null ? null : target-current;
-    const demandKey=JSON.stringify([target,selectedEntities,priority]),previousDemand=demandMemory.get(room.id);
-    const callingForHeat=current!==null&&(deficit>0.2||scheduled&&current<7||previousDemand?.key===demandKey&&previousDemand.calling&&deficit>0);
+    const heatControl=roomControl(room),demandKey=JSON.stringify([target,selectedEntities,priority,heatControl]),previousDemand=demandMemory.get(room.id);
+    const callingForHeat=current!==null&&(deficit>heatControl.startBelow||scheduled&&current<7||previousDemand?.key===demandKey&&previousDemand.calling&&deficit>heatControl.stopBelow);
+    const coasting=current!==null&&deficit>0&&deficit<=heatControl.stopBelow;
     demandMemory.set(room.id,{key:demandKey,calling:callingForHeat});
     const radiator = byId.get(room.radiatorEntity);
     const radiatorAvailable = Boolean(radiator && !['unknown','unavailable'].includes(radiator.state));
@@ -75,7 +77,7 @@ export function evaluateHeating({rooms,rules,states,config,now=Date.now(),presen
     const unit=radiator?.attributes?.temperature_unit || radiator?.attributes?.unit_of_measurement || temperatureUnit;
     const reportedTarget=radiator?.attributes?.temperature;
     const currentTarget=radiatorAvailable&&typeof reportedTarget==='number'&&Number.isFinite(reportedTarget)&&['°C','°F'].includes(unit)?unit==='°F'?(reportedTarget-32)*5/9:reportedTarget:null;
-    return {...room,measurements,sourceAt,sensorFingerprint:JSON.stringify(readings.map(r=>r.entityId).sort()),sensorEntities:selectedEntities,sensorCount:selectedEntities.length,sensorCountUsed:readings.length,current,target,priority,effectiveWeight:scheduled?1:room.weight*priority,occupied,presence,reason,fresh:current !== null,deficit,callingForHeat,radiator:room.radiatorEntity?{entityId:room.radiatorEntity,name:radiator?.attributes?.friendly_name || room.radiatorEntity,available:radiatorAvailable,currentTarget,currentTemperature:temperature(radiator,now,maxAge,true,temperatureUnit),mode:radiatorAvailable?radiator.state:null,action:radiatorAvailable?radiator.attributes?.hvac_action || null:null,usedInAverage:selectedEntities.includes(room.radiatorEntity),target,preview:config.thermostat?.mode!=='active'}:null};
+    return {...room,heatControl,coasting,measurements,sourceAt,sensorFingerprint:JSON.stringify(readings.map(r=>r.entityId).sort()),sensorEntities:selectedEntities,sensorCount:selectedEntities.length,sensorCountUsed:readings.length,current,target,priority,effectiveWeight:scheduled?1:room.weight*priority,occupied,presence,reason,fresh:current !== null,deficit,callingForHeat,radiator:room.radiatorEntity?{entityId:room.radiatorEntity,name:radiator?.attributes?.friendly_name || room.radiatorEntity,available:radiatorAvailable,currentTarget,currentTemperature:temperature(radiator,now,maxAge,true,temperatureUnit),mode:radiatorAvailable?radiator.state:null,action:radiatorAvailable?radiator.attributes?.hvac_action || null:null,usedInAverage:selectedEntities.includes(room.radiatorEntity),target,preview:config.thermostat?.mode!=='active'}:null};
   });
   const usable = evaluated.filter(room=>room.fresh);
   const totalWeight = usable.reduce((sum,r)=>sum+r.effectiveWeight,0);
@@ -89,10 +91,17 @@ export function evaluateHeating({rooms,rules,states,config,now=Date.now(),presen
   return {mode:config.thermostat?.mode==='active'?'active':'listen',smartPlan,activity,configuredActivity:plan?config.heatingPlan.manualActivity:heating.activity,plan:plan?{...plan,settings:config.heatingPlan}:null,rooms:evaluated,rules,average,desired,blocked,controlRoomId:smartPlan?smartPlan.leadRoomId:controlRoom?.id || null,demandingRoomCount:demanding.length,controlStrategy:scheduled?'scheduled-priority':'room-demand',valveControlEnabled:false};
 }
 
-export function heatingSummary({store,ha},now=Date.now(),config=store.config()) {
+export function heatingSummary({store,ha,gasBudget},now=Date.now(),config=store.config()) {
   const rooms = store.list('rooms');
   const live = ha.status.connected && now-Date.parse(ha.status.fetchedAt)<=45000;
-  return evaluateHeating({rooms,rules:store.list('rules'),states:live?ha.states:[],config,now,presenceMemory:ha.presenceMemory ||= new Map(),occupancyMemory:ha.occupancyMemory ||= {},temperatureUnit:ha.temperatureUnit,demandMemory:ha.demandMemory ||= new Map()});
+  const data=evaluateHeating({rooms,rules:store.list('rules'),states:live?ha.states:[],config,now,presenceMemory:ha.presenceMemory ||= new Map(),occupancyMemory:ha.occupancyMemory ||= {},temperatureUnit:ha.temperatureUnit,demandMemory:ha.demandMemory ||= new Map()});
+  const budget=gasBudget?.status(now);data.budget=budget || null;
+  if(budget?.paused&&data.smartPlan?.kind==='frost')data.budget={...budget,frostOverride:true};
+  if(budget?.paused&&data.smartPlan&&data.smartPlan.kind!=='frost'){
+    data.smartPlan={...data.smartPlan,heat:false,flowC:0,kind:'budget',reason:budget.reason};
+    data.rooms=data.rooms.map(room=>({...room,budgetPaused:true}));
+  }
+  return data;
 }
 export const heatingModule = {
   id:'heating',name:'Heating',description:'Scheduled room priorities and coordinated boiler/radiator control with Planning and Active modes.',

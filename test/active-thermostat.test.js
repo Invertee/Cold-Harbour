@@ -186,3 +186,18 @@ test('capture on existing firmware uses one observation reply before resuming Ac
  await f.app.context.ha.poll();const resumed=f.exchange({opentherm:{...capture,active:true,last_control_id:observed.diagnostic_capture.id}},f.now+40000);
  assert.equal(resumed.authority,'remote');assert.equal(resumed.lease_s,90);
 });
+
+test('gas budget pauses coordinated heat and valve requests, preserves Planning and allows frost protection',async t=>{
+ const f=fixture(t);
+ f.store.save('energy',{...f.store.config().energy,gasToday:'sensor.gas_today'});
+ f.store.save('gasBudget',{...f.store.config().gasBudget,enabled:true,action:'pause',dailyLimit:10});
+ f.states.push({entity_id:'sensor.gas_today',state:'11',attributes:{unit_of_measurement:'kWh'},last_updated:new Date(f.now).toISOString(),last_reported:new Date(f.now).toISOString()});
+ await f.app.context.ha.poll();f.app.context.gasBudget.capture(f.now);f.exchange();
+ let data=heatingSummary(f.app.context,f.now);assert.equal(data.budget.paused,true);assert.equal(data.smartPlan.heat,false);assert.equal(data.smartPlan.kind,'budget');
+ assert.equal(valvePlan(data.rooms[1]).opening,0);assert.equal(f.app.context.thermostat.response(data,{connected:true,selectedMode:'Cold Harbour',telemetry:f.telemetry},f.now).authority,'pid');
+ await f.app.context.thermostat.setMode('active');await f.app.context.thermostat.sync();await f.app.context.ha.poll();
+ let reply=f.exchange({},f.now+30000);assert.equal(reply.authority,'remote');assert.equal(reply.enabled,false);assert.equal(reply.flow_c,0);assert.match(reply.reason,/gas budget/);
+ f.states.find(s=>s.entity_id==='sensor.office').state='6.5';await f.app.context.ha.poll();data=heatingSummary(f.app.context,f.now);assert.equal(data.smartPlan.kind,'frost');assert.equal(data.smartPlan.heat,true);assert.notEqual(data.rooms[0].budgetPaused,true);
+ f.store.save('gasBudget',{...f.store.config().gasBudget,enabled:false});f.states.find(s=>s.entity_id==='sensor.office').state='18';await f.app.context.ha.poll();
+ data=heatingSummary(f.app.context,f.now);assert.equal(data.smartPlan.heat,true);assert.equal(data.budget.paused,false);
+});

@@ -94,7 +94,7 @@ function chargeRows(entity,kind,now) {
   }
   return [...rows.values()].sort((a,b)=>a.start.localeCompare(b.start));
 }
-function dailyRecord(entity,role,timezone,now) {
+export function dailyRecord(entity,role,timezone,now) {
   if(!available(entity))return null;
   const cost=role.endsWith('Cost'),rows=chargeRows(entity,cost?'cost':'usage',now);
   const days=[...new Set(rows.map(row=>localDate(new Date(row.start),timezone)))];

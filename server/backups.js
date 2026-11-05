@@ -34,6 +34,7 @@ export function validateBackupData(data){
   if(typeof data.appVersion!=='string'||data.appVersion.length>80||typeof data.exportedAt!=='string'||!Number.isFinite(Date.parse(data.exportedAt)))fail('Invalid backup metadata.');
   // Backups from before notification settings existed remain importable.
   if(object(data.config)&&!Object.hasOwn(data.config,'notifications'))data={...data,config:{...data.config,notifications:structuredClone(defaults.notifications)}};
+  if(object(data.config)&&!Object.hasOwn(data.config,'gasBudget'))data={...data,config:{...data.config,gasBudget:structuredClone(defaults.gasBudget)}};
   keys(data.config,Object.keys(defaults),'backup settings');
   const config={};
   for(const [section,initial] of Object.entries(defaults)){
