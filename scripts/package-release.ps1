@@ -7,7 +7,7 @@ try {
 $coldVersion = (Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json).version
 New-Item -ItemType Directory -Path (Join-Path $coldRoot 'releases') -Force | Out-Null
 $coldFirmware = @(rg --files esphome | Where-Object { $_ -notmatch '(^|[\\/])secrets\.yaml$|__pycache__|\.esphome|\.(bin|elf|pyc)$' })
-$coldApp = @('README.md','DOCS.md','CHANGELOG.md','repository.yaml','package.json','Dockerfile','config.yaml','compose.yaml','.dockerignore','.gitignore') + @(rg --files server public test scripts) + $coldFirmware
+$coldApp = @('README.md','DOCS.md','CHANGELOG.md','repository.yaml','package.json','Dockerfile','config.yaml','icon.png','logo.png','compose.yaml','.dockerignore','.gitignore') + @(rg --files server public test scripts) + $coldFirmware
 function New-ColdRelease([string]$Name, [string[]]$Files, [bool]$Repository = $false) {
   $coldZipPath = Join-Path $coldRoot ('releases\' + $Name)
   $coldStream = [System.IO.File]::Open($coldZipPath, [System.IO.FileMode]::CreateNew)

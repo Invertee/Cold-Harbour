@@ -2,7 +2,7 @@ import {defaultHeatingPlan} from './heating-plan.js';
 export const defaults = {
   general: { mode: 'listen', timezone: 'Europe/London' },
   homeAssistant: { url: '', powerEntity: '', captureEntity: '' },
-  notifications: { enabled: false, targets: [] },
+  notifications: { enabled: false, targets: [], gasBudget:{enabled:false,thresholdPercent:90,targets:[],pauseAction:true} },
   energy: {
     electricityMeter:'', gasMeter:'',
     electricityDemand:'', electricityToday:'', electricityTodayCost:'', electricityPrevious:'', electricityPreviousCost:'', electricityRate:'',

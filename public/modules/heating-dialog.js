@@ -21,7 +21,7 @@ export async function openHeatingDialog(ctx,{view,tab='plan',focus}={}){
   if(!session||disposed||mounted.has(tab))return;
   const panel=panels.get(tab);mounted.set(tab,null);
   if(tab==='plan')mountScheduleEditor(panel,session);
-  else if(tab==='weather')mountWeatherEditor(panel,session);
+  else if(tab==='weather')mounted.set(tab,mountWeatherEditor(panel,session));
   else{
    const id=tab,analysis=await mountHeatingAnalysis(ctx,{root:panel,editor,tab:id==='forecast'?'forecast':'learning'});
    if(disposed)analysis?.destroy();else mounted.set(id,analysis);

@@ -10,6 +10,7 @@ import {HttpError} from '../server/http.js';
 import {validateConfig} from '../server/validate.js';
 import {validateBackupData} from '../server/backups.js';
 import {notificationContent} from '../public/modules/notifications.js';
+import {defaults} from '../server/defaults.js';
 
 const services=[{domain:'notify',services:{notify:{},persistent_notification:{},send_message:{},mobile_app_sam_phone:{name:'Sam’s phone'},mobile_app_tablet:{},'mobile_app_bad/path':{}}},{domain:'switch',services:{turn_on:{}}}];
 const states=[{entity_id:'notify.hall_display',state:'unknown',attributes:{friendly_name:'Hall display',supported_features:1}},{entity_id:'notify.kitchen',state:'2026-10-26T10:00:00Z',attributes:{friendly_name:'Kitchen display'}},{entity_id:'notify.offline',state:'unavailable'},{entity_id:'switch.boiler',state:'on'}];
@@ -79,7 +80,7 @@ test('invalid and unprotected requests never issue service calls or change notif
   assert.equal((await f.request('notifications/test',{target:phone},{'X-MODS-Request':'0'})).status,403);
   assert.equal((await f.request('notifications/test',{target:phone},{'Sec-Fetch-Site':'cross-site'})).status,403);
   for(const values of [{enabled:'true'},{enabled:true},{targets:[phone,phone]},{targets:['service:notify.notify']},{targets:'all'},{targets:Array(21).fill(phone)},{unexpected:true}])assert.equal((await f.request('settings',{section:'notifications',values})).status,400);
-  assert.equal(f.writes.length,0);assert.deepEqual(f.store.config().notifications,{enabled:false,targets:[]});
+  assert.equal(f.writes.length,0);assert.deepEqual(f.store.config().notifications,defaults.notifications);
 });
 
 test('connection and provider failures are visible without exposing internal errors',async t=>{
@@ -148,11 +149,11 @@ test('Supervisor notifications use the automatic HA connection and token',async 
 test('existing installations gain defaults, saved devices survive restart and older backups remain importable',async t=>{
   const f=await fixture(t),data={appVersion:'0.14.1',exportedAt:new Date().toISOString(),config:f.store.config(),rooms:f.store.list('rooms'),rules:f.store.list('rules'),secrets:{haToken:'',boilerKey:''}};
   delete data.config.notifications;
-  assert.deepEqual(validateBackupData(data).config.notifications,{enabled:false,targets:[]});assert.equal(Object.hasOwn(data.config,'notifications'),false);
+  assert.deepEqual(validateBackupData(data).config.notifications,defaults.notifications);assert.equal(Object.hasOwn(data.config,'notifications'),false);
   f.store.save('notifications',validateConfig('notifications',{enabled:true,targets:[phone]},f.store.config().notifications));
-  const reopened=createStore(f.directory);assert.deepEqual(reopened.config().notifications,{enabled:true,targets:[phone]});reopened.close();
+  const reopened=createStore(f.directory);assert.deepEqual(reopened.config().notifications,{...defaults.notifications,enabled:true,targets:[phone]});reopened.close();
   f.store.db.exec("DELETE FROM migrations WHERE version=12; DELETE FROM settings WHERE section='notifications';");
-  const upgraded=createStore(f.directory);assert.deepEqual(upgraded.config().notifications,{enabled:false,targets:[]});upgraded.close();
+  const upgraded=createStore(f.directory);assert.deepEqual(upgraded.config().notifications,defaults.notifications);upgraded.close();
 });
 
 test('notification page keeps unavailable saved devices removable, escapes names and disables testing without destinations',()=>{

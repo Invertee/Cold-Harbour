@@ -12,12 +12,13 @@ import { HttpError,json,readJson } from './http.js';
 import { validateConfig,validateRoom,validateRule,str } from './validate.js';
 import {registerBackups,MAX_BACKUP_BYTES} from './backups.js';
 import {createNotifications} from './integrations/notifications.js';
+import {createGasBudgetNotifications} from './modules/gas-budget-notifications.js';
 import metadata from '../package.json' with {type:'json'};
 
 const publicDir = fileURLToPath(new URL('../public/',import.meta.url));
-const mime = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};
+const mime = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.webmanifest':'application/manifest+json'};
 
-export function createApplication({dataDir=process.env.DATA_DIR || resolve('data'),haRequest,haRegistryRequest,ingressOnly=Boolean(process.env.SUPERVISOR_TOKEN),modules=[]} = {}) {
+export function createApplication({dataDir=process.env.DATA_DIR || resolve('data'),haRequest,haRegistryRequest,haActionSocket,ingressOnly=Boolean(process.env.SUPERVISOR_TOKEN),modules=[]} = {}) {
   const store = createStore(dataDir), ha = createHomeAssistant(store,haRequest,haRegistryRequest);
   const context = {store,ha};
   context.notifications=createNotifications(store,ha,haRequest);
@@ -25,8 +26,9 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
   const route = (method,path,handler)=>{ const key=`${method} ${path}`; if(routes.has(key)) throw new Error(`Duplicate route ${key}`); routes.set(key,handler); };
   const installedModules = [energyModule,heatingModule,boilerModule,...modules];
   for (const module of installedModules) module.register({route,context});
+  context.gasBudgetNotifications=createGasBudgetNotifications(context,{Socket:haActionSocket});
   registerBackups({route,context});
-  let ticking = null, timer, lastPrune = 0,closed = false,pollFailures=0;
+  let ticking = null, notifying=null, timer, lastPrune = 0,closed = false,pollFailures=0;
   async function tick() {
     if (closed) return;
     if (ticking) return ticking;
@@ -44,6 +46,8 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
       }
       context.heatingHistory.capture(now);
       context.heatingOutlook.read(now);
+      // Phone delivery must not delay the heating control loop.
+      if(!notifying)notifying=context.gasBudgetNotifications.check(now).catch(()=>{}).finally(()=>{notifying=null;});
       if (now-lastPrune>3600000) { store.prune(); lastPrune=now; }
     })().finally(()=>{ticking=null;});
     return ticking;
@@ -52,9 +56,14 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
     return {...store.config(),secrets:{haToken:Boolean(store.secret('haToken')),boilerKey:Boolean(store.secret('boilerKey'))},supervisor:Boolean(process.env.SUPERVISOR_TOKEN)};
   }
   route('GET','/api/settings',publicConfig);
-  route('GET','/api/notifications',()=>context.notifications.discover());
+  route('GET','/api/notifications',async()=>({...await context.notifications.discover(),actions:context.gasBudgetNotifications.status()}));
   route('POST','/api/notifications/test',({body})=>context.notifications.test(body));
   route('POST','/api/notifications/send',({body})=>context.notifications.send(body));
+  route('POST','/api/energy/gas-budget/pause',({body})=>{
+    if(Object.keys(body).some(key=>key!=='paused')||typeof body.paused!=='boolean')throw new HttpError(400,'Choose whether heating is paused for today.');
+    const result=body.paused?context.gasBudget.pause():context.gasBudget.resume();
+    void tick().catch(()=>{});return result;
+  });
   route('GET','/api/modules',()=>installedModules.map(({id,name,description})=>({id,name,description})));
   route('GET','/api/entities',()=>({entities:ha.states.map(({entity_id,state,attributes,last_reported,last_updated})=>({entity_id,state,attributes,last_reported,last_updated})),status:ha.status}));
   route('GET','/api/rooms',()=>store.list('rooms'));
@@ -146,6 +155,6 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
       };
       void poll();
     },
-    async close() { closed=true;clearTimeout(timer);await ticking;await Promise.all([new Promise(resolve=>server.close(resolve)),new Promise(resolve=>deviceServer.close(resolve))]);store.close(); },
+    async close() { closed=true;clearTimeout(timer);const closingActions=context.gasBudgetNotifications.close();await ticking;await notifying;await closingActions;await Promise.all([new Promise(resolve=>server.close(resolve)),new Promise(resolve=>deviceServer.close(resolve))]);store.close(); },
   };
 }

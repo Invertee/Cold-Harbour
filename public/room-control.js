@@ -10,11 +10,12 @@ export function roomControlValues(form){
  return Object.fromEntries(Object.keys(roomControl({})).map(key=>[key,key==='openingMode'?form.elements[`heat_${key}`].value:Number(form.elements[`heat_${key}`].value)]));
 }
 export function roomResponsePreview(room){
+ room={...room,heatingTarget:room.target,controlDeficit:undefined};
  const c=roomControl(room),t=roomThresholds(room);
  if(c.startBelow<=c.stopBelow||c.fullOpenBelow<=c.stopBelow||c.minOpening>c.maxOpening)return '<p class="field-help">Reopen and maximum-opening shortfalls must exceed the stop setting. Minimum opening must not exceed maximum.</p>';
  const opening=requestedOpening({...room,fresh:true,callingForHeat:true,deficit:c.startBelow+0.001});
  const points=[...new Set([3,2,1,0.5,c.startBelow,c.stopBelow,0])].sort((a,b)=>b-a);
- return `<p class="field-help">At a ${fixed(room.target,2)}°C target: opens below <strong>${fixed(t.opensBelowC,2)}°C</strong>, initially about <strong>${opening}%</strong>. Closes at <strong>${fixed(t.closesAtC,2)}°C</strong>.${Number.isFinite(room.current)?` Current room: ${fixed(room.current,2)}°C.`:''}</p><div class="table-scroll"><table><thead><tr><th>Room temperature</th><th>Opening while warming</th></tr></thead><tbody>${points.map(deficit=>`<tr><td>${fixed(room.target-deficit,2)}°C</td><td>${requestedOpening({...room,fresh:true,deficit,callingForHeat:deficit>c.stopBelow})}%</td></tr>`).join('')}</tbody></table></div><p class="field-help">The warming column shows an already open valve tapering until the close temperature. A closed valve waits for the reopen temperature.</p>`;
+ return `<p class="field-help">At a ${fixed(room.target,2)}°C target: opens below <strong>${fixed(t.opensBelowC,2)}°C</strong>, initially about <strong>${opening}%</strong>. Closes at <strong>${fixed(t.closesAtC,2)}°C</strong>.${Number.isFinite(room.current)?` Current room: ${fixed(room.current,2)}°C.`:''}</p><div class="table-scroll"><table><thead><tr><th>Room temperature</th><th>Opening while warming</th></tr></thead><tbody>${points.map(deficit=>`<tr><td>${fixed(room.target-deficit,2)}°C</td><td>${requestedOpening({...room,fresh:true,deficit,callingForHeat:deficit>c.stopBelow})}%</td></tr>`).join('')}</tbody></table></div><p class="field-help">The warming column shows an already open valve tapering until the close temperature. A closed valve waits for the reopen temperature. Sun impact can ease these thresholds automatically during sunny weather.</p>`;
 }
 export function bindRoomControl(form,room,settings){
  const update=()=>{

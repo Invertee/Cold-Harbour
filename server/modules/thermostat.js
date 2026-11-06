@@ -1,13 +1,13 @@
 import {HttpError} from '../http.js';
-import {requestedOpening,roomThresholds,roomControl} from '../../public/heating-model.js';
+import {requestedOpening,roomThresholds,roomControl,heatingTarget} from '../../public/heating-model.js';
 
 const clamp=(n,low,high)=>Math.max(low,Math.min(high,n));
 // Requested travel from the room response, not measured water flow or kW.
 export function valvePlan(room){
- const opening=requestedOpening(room);
+ const opening=requestedOpening(room),target=heatingTarget(room);
  return {roomId:room.id,entityId:room.radiatorEntity,opening,closing:100,...roomThresholds(room),response:roomControl(room),
-  roomTarget:room.target,deviceTarget:opening?Math.min(room.target+5,Math.max(room.target+3,(room.radiator?.currentTemperature ?? room.current)+1)):room.target,
-  reason:!room.fresh?'Room reading unavailable':room.budgetPaused?'Paused by gas budget':opening?`${room.priority==='high'?'Comfort':'Setback'} demand`:room.coasting?'Coasting to target':'Room target satisfied'};
+  roomTarget:room.target,deviceTarget:opening?Math.min(target+5,Math.max(target+3,(room.radiator?.currentTemperature ?? room.current)+1)):target,
+  reason:!room.fresh?'Room reading unavailable':room.budgetPaused?'Paused by gas budget':opening?`${room.priority==='high'?'Comfort':'Setback'} demand`:room.coasting?room.sunCompensation?.reductionC>0?'Allowing for sunshine':'Coasting to target':'Room target satisfied'};
 }
 
 export function createThermostat(context,summary){

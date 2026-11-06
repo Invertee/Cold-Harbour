@@ -5,14 +5,16 @@ export const defaultRoomControl={startBelow:0.2,stopBelow:0,fullOpenBelow:2,minO
 const clamp=(n,low,high)=>Math.max(low,Math.min(high,n));
 
 export const roomControl=room=>({...defaultRoomControl,...room.heatControl});
+export const heatingTarget=room=>room.heatingTarget ?? room.target;
+export const heatingDeficit=room=>room.controlDeficit ?? room.deficit;
 export function roomThresholds(room){
- const control=roomControl(room);
- return {opensBelowC:room.target-control.startBelow,closesAtC:room.target-control.stopBelow,fullOpenAtC:room.target-control.fullOpenBelow};
+ const control=roomControl(room),target=heatingTarget(room);
+ return {opensBelowC:target-control.startBelow,closesAtC:target-control.stopBelow,fullOpenAtC:target-control.fullOpenBelow};
 }
 export function requestedOpening(room){
  if(!room.fresh||!room.callingForHeat||room.budgetPaused)return 0;
  const control=roomControl(room);
- const proportional=Math.ceil(clamp((room.deficit-control.stopBelow)/(control.fullOpenBelow-control.stopBelow),0,1)*control.maxOpening/5)*5;
+ const proportional=Math.ceil(clamp((heatingDeficit(room)-control.stopBelow)/(control.fullOpenBelow-control.stopBelow),0,1)*control.maxOpening/5)*5;
  return clamp(control.openingMode==='fixed'?control.fixedOpening:proportional,control.minOpening,control.maxOpening);
 }
 export function curveFlow(target,outdoor,settings){

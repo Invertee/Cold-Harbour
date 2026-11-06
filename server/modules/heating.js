@@ -8,6 +8,7 @@ import {smartThermostatPlan} from '../smart-thermostat.js';
 import {createHeatingOutlook} from './heating-outlook.js';
 import {createThermostat,valvePlan} from './thermostat.js';
 import {roomControl} from '../../public/heating-model.js';
+import {sunlightReading,roomSunCompensation} from '../sun-compensation.js';
 
 const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function roomPresence(room,byId,now,maxAge,memory) {
@@ -44,6 +45,7 @@ export function evaluateHeating({rooms,rules,states,config,now=Date.now(),presen
   const byId = new Map(states.map(s=>[s.entity_id,s]));
   const plan=config.heatingPlan?resolveHeatingPlan(config.heatingPlan,states,now,general.timezone,occupancyMemory):null;
   const scheduled=config.heatingPlan?.version===2;
+  const sunlight=sunlightReading(config.heatingPlan?.weather,states,now);
   const matches = plan?[]:rules.filter(rule=>ruleActive(rule,now,general.timezone));
   const activity = plan?plan.profile.id:heating.activity === 'auto' ? [...matches].sort((a,b)=>b.priority-a.priority)[0]?.activity || 'home' : heating.activity;
   const maxAge = heating.staleMinutes*60000;
@@ -67,9 +69,10 @@ export function evaluateHeating({rooms,rules,states,config,now=Date.now(),presen
     const target = scheduled?scheduledRoomTarget(room,priority,config.heatingPlan,{...plan.profile,houseTarget:plan.activeTarget}):plan?presenceSetback?Math.min(planned,room.eco):planned:away ? room.eco : matching?.target ?? baseTarget;
     const reason = scheduled?`${plan.override?`${plan.profile.name} · sensor override`:`${plan.occupancy.effective==='away'?'Away':'Home'} schedule`} · ${priority==='high'?'comfort':'low temperature'}${priority==='high'?' target':''}`:plan?`${plan.profile.name}${presenceSetback?' · room Eco setback':occupied?' · room in use':''}`:away ? 'Away setback' : matching?.name || (occupied ? presence.held ? 'Recent presence' : 'Room in use' : presenceControlsTarget && presence.unknown && activity!=='sleep' ? 'Presence unavailable · comfort retained' : presenceControlsTarget ? 'No presence · Eco target' : activity==='sleep' ? 'Sleep setback' : 'Base comfort');
     const deficit = current === null ? null : target-current;
-    const heatControl=roomControl(room),demandKey=JSON.stringify([target,selectedEntities,priority,heatControl]),previousDemand=demandMemory.get(room.id);
-    const callingForHeat=current!==null&&(deficit>heatControl.startBelow||scheduled&&current<7||previousDemand?.key===demandKey&&previousDemand.calling&&deficit>heatControl.stopBelow);
-    const coasting=current!==null&&deficit>0&&deficit<=heatControl.stopBelow;
+    const sunCompensation=roomSunCompensation(room,target,current,sunlight),heatingTarget=sunCompensation.heatingTargetC,controlDeficit=current===null?null:heatingTarget-current;
+    const heatControl=roomControl(room),demandKey=JSON.stringify([target,selectedEntities,priority,heatControl,room.sunExposure ?? 0]),previousDemand=demandMemory.get(room.id);
+    const callingForHeat=current!==null&&(controlDeficit>heatControl.startBelow||scheduled&&current<7||previousDemand?.key===demandKey&&previousDemand.calling&&controlDeficit>heatControl.stopBelow);
+    const coasting=current!==null&&deficit>0&&controlDeficit<=heatControl.stopBelow;
     demandMemory.set(room.id,{key:demandKey,calling:callingForHeat});
     const radiator = byId.get(room.radiatorEntity);
     const radiatorAvailable = Boolean(radiator && !['unknown','unavailable'].includes(radiator.state));
@@ -77,7 +80,7 @@ export function evaluateHeating({rooms,rules,states,config,now=Date.now(),presen
     const unit=radiator?.attributes?.temperature_unit || radiator?.attributes?.unit_of_measurement || temperatureUnit;
     const reportedTarget=radiator?.attributes?.temperature;
     const currentTarget=radiatorAvailable&&typeof reportedTarget==='number'&&Number.isFinite(reportedTarget)&&['°C','°F'].includes(unit)?unit==='°F'?(reportedTarget-32)*5/9:reportedTarget:null;
-    return {...room,heatControl,coasting,measurements,sourceAt,sensorFingerprint:JSON.stringify(readings.map(r=>r.entityId).sort()),sensorEntities:selectedEntities,sensorCount:selectedEntities.length,sensorCountUsed:readings.length,current,target,priority,effectiveWeight:scheduled?1:room.weight*priority,occupied,presence,reason,fresh:current !== null,deficit,callingForHeat,radiator:room.radiatorEntity?{entityId:room.radiatorEntity,name:radiator?.attributes?.friendly_name || room.radiatorEntity,available:radiatorAvailable,currentTarget,currentTemperature:temperature(radiator,now,maxAge,true,temperatureUnit),mode:radiatorAvailable?radiator.state:null,action:radiatorAvailable?radiator.attributes?.hvac_action || null:null,usedInAverage:selectedEntities.includes(room.radiatorEntity),target,preview:config.thermostat?.mode!=='active'}:null};
+    return {...room,heatControl,heatingTarget,controlDeficit,sunCompensation,coasting,measurements,sourceAt,sensorFingerprint:JSON.stringify(readings.map(r=>r.entityId).sort()),sensorEntities:selectedEntities,sensorCount:selectedEntities.length,sensorCountUsed:readings.length,current,target,priority,effectiveWeight:scheduled?1:room.weight*priority,occupied,presence,reason,fresh:current !== null,deficit,callingForHeat,radiator:room.radiatorEntity?{entityId:room.radiatorEntity,name:radiator?.attributes?.friendly_name || room.radiatorEntity,available:radiatorAvailable,currentTarget,currentTemperature:temperature(radiator,now,maxAge,true,temperatureUnit),mode:radiatorAvailable?radiator.state:null,action:radiatorAvailable?radiator.attributes?.hvac_action || null:null,usedInAverage:selectedEntities.includes(room.radiatorEntity),target,preview:config.thermostat?.mode!=='active'}:null};
   });
   const usable = evaluated.filter(room=>room.fresh);
   const totalWeight = usable.reduce((sum,r)=>sum+r.effectiveWeight,0);

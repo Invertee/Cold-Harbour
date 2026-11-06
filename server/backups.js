@@ -36,6 +36,7 @@ export function validateBackupData(data){
   // Backups from before notification settings existed remain importable.
   if(object(data.config)&&!Object.hasOwn(data.config,'notifications'))data={...data,config:{...data.config,notifications:structuredClone(defaults.notifications)}};
   if(object(data.config)&&!Object.hasOwn(data.config,'gasBudget'))data={...data,config:{...data.config,gasBudget:structuredClone(defaults.gasBudget)}};
+  if(object(data.config?.notifications)&&!Object.hasOwn(data.config.notifications,'gasBudget'))data={...data,config:{...data.config,notifications:{...data.config.notifications,gasBudget:structuredClone(defaults.notifications.gasBudget)}}};
   const legacyPeriods=data.config?.gasBudget?.periods;
   if(object(data.config?.gasBudget)&&Object.hasOwn(data.config.gasBudget,'periods')){
     const {periods,...gasBudget}=data.config.gasBudget;
@@ -133,7 +134,7 @@ export function registerBackups({route,context}){
     try{
       for(const [section,value] of Object.entries(data.config))store.save(section,value);
       for(const [name,value] of Object.entries(data.secrets))store.secret(name,value);
-      store.db.exec('DELETE FROM rules; DELETE FROM rooms; DELETE FROM boiler_devices;');
+      store.db.exec('DELETE FROM rules; DELETE FROM rooms; DELETE FROM boiler_devices; DELETE FROM gas_budget_notifications; DELETE FROM gas_budget_pauses;');
       for(const room of data.rooms)store.put('rooms',room);
       for(const rule of data.rules)store.put('rules',rule);
       store.log('backup','Configuration imported. Smart Thermostat returned to Planning; review connections and room mappings before selecting Active.');

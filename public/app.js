@@ -12,7 +12,7 @@ export async function render({background=false,refresh=false}={}) {
   if(background&&pendingRenders)return;
   pendingRenders++;
   const version=++generation;
-  let id=location.hash.slice(1).split('/')[0] || 'boiler';
+  let id=location.hash.slice(1).split('/')[0] || 'heating';
   if(['connections','entities'].includes(id)){history.replaceState(null,'',`#settings/${id}`);id='settings';}
   const module=modules.find(module=>module.id===id) || modules[0];
   if(displayedModule!==module.id){displayedModule=null;main.innerHTML='<div class="loading">Loading…</div>';document.querySelector('#connection-notice').hidden=true;}

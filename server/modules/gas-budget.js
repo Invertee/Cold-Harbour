@@ -2,6 +2,7 @@ import {resolveEnergyEntities,dailyRecord} from '../integrations/octopus-entitie
 import {localDate,localParts,dayStart,shiftDay} from '../time.js';
 import {defaults} from '../defaults.js';
 import {resolveHeatingPlan} from '../heating-plan.js';
+import {HttpError} from '../http.js';
 
 function gasReading(context,now){
  const {store,ha}=context,config=store.config(),settings={...defaults.gasBudget,...config.gasBudget};
@@ -50,16 +51,38 @@ export function createGasBudget(context){
    // A witnessed cap remains in effect through stale readings until local
    // midnight. Missing data alone never becomes zero consumption or a cap.
    const blocked=Boolean(dailyReached||allowanceReached);
-   const paused=Boolean(settings.enabled&&settings.action==='pause'&&blocked);
+   const manualPause=Boolean(source&&store.db.prepare('SELECT 1 FROM gas_budget_pauses WHERE source=? AND day=? AND timezone=?').get(source,day,timezone));
+   const paused=Boolean(settings.enabled&&(manualPause||settings.action==='pause'&&blocked));
    const amount=n=>settings.unit==='cost'?`£${n.toFixed(2)}`:`${n.toFixed(1)} kWh`;
-   const reason=dailyReached?`Daily gas budget reached (${amount(used)} / ${amount(settings.dailyLimit)}). Resumes after local midnight.`:
+   const reason=manualPause?'Heating paused for today. Resumes after local midnight, or resume it here sooner.':dailyReached?`Daily gas budget reached (${amount(used)} / ${amount(settings.dailyLimit)}). Resumes after local midnight.`:
     allowanceReached?`Gas allowance reached (${used===null?'no reading':amount(used)} / ${amount(allowance.limit)} available so far). Waiting for the next heating schedule allocation.`:
     unavailable?'Gas reading unavailable or too old. Budget cutoff is waiting for a fresh daily reading.':`Within gas budget (${amount(used)} / ${amount(allowance.limit)} available so far).`;
    return {settings,day,source,timezone,kwh:r.usage.value,cost:r.cost.value,usageAt:r.usage.at,costAt:r.cost.at,usageFresh:r.usage.fresh,costFresh:r.cost.fresh,
     used,remaining:used===null?null:Math.max(0,settings.dailyLimit-used),availableRemaining:used===null?null:Math.max(0,allowance.limit-used),
-    fraction:used===null?null:Math.min(1,used/settings.dailyLimit),fresh:metric.fresh,paused,wouldPause:blocked,dailyReached,
+    fraction:used===null?null:Math.min(1,used/settings.dailyLimit),fresh:metric.fresh,paused,manualPause,wouldPause:blocked,dailyReached,
     state:!settings.enabled?'disabled':paused?'paused':blocked?'limit':unavailable?'waiting':'within',reason,allowance,
     resetsAt:new Date(dayStart(shiftDay(day,1),timezone)).toISOString(),warnings:r.warnings};
+  },
+  pause(now=Date.now()){
+   const s=this.status(now);
+   if(!s.settings.enabled||!s.source)throw new HttpError(409,'Enable a gas budget and choose a gas meter before pausing heating.');
+   store.db.prepare('INSERT OR IGNORE INTO gas_budget_pauses VALUES (?,?,?)').run(s.source,s.day,s.timezone);
+   context.thermostat?.reset();
+   store.log('heating','Heating paused for today from the gas budget. Frost protection remains available.');
+   return this.status(now);
+  },
+  resume(now=Date.now()){
+   const s=this.status(now);
+   store.db.exec('BEGIN');
+   try{
+    store.db.prepare('DELETE FROM gas_budget_pauses WHERE source=? AND day=? AND timezone=?').run(s.source,s.day,s.timezone);
+    // An old notification must not undo a later explicit resume.
+    store.db.prepare('UPDATE gas_budget_notifications SET consumed=1 WHERE day=?').run(s.day);
+    store.db.exec('COMMIT');
+   }catch(error){store.db.exec('ROLLBACK');throw error;}
+   context.thermostat?.reset();
+   store.log('heating','Today’s manual gas budget pause cleared. Automatic budget limits still apply.');
+   return this.status(now);
   },
   chart(now=Date.now()){
    const status=this.status(now),points=status.source?store.db.prepare('SELECT at,kwh,cost,usage_at,cost_at FROM gas_samples WHERE source=? AND day=? ORDER BY at').all(status.source,status.day):[];

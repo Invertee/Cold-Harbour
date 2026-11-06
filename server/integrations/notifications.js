@@ -49,9 +49,9 @@ export function createNotifications(store,ha,request=fetchJson) {
     if(!message)throw new HttpError(400,'Enter a notification message.');
     return {title,message};
   }
-  async function deliver(body,isTest){
+  async function deliver(body,isTest,budget=null){
     const values=messageValues(body,isTest),config=store.config().notifications;
-    const ids=isTest?[notificationTarget(body.target)]:config.targets;
+    const ids=isTest?[notificationTarget(body.target)]:budget?[notificationTarget(budget.target)]:config.targets;
     if(!isTest&&!config.enabled)throw new HttpError(409,'Enable notifications and save at least one device first.');
     if(!ids.length)throw new HttpError(400,'Choose at least one notification device.');
     if(busy)throw new HttpError(409,'A notification is already being sent. Wait for its result.');
@@ -64,11 +64,13 @@ export function createNotifications(store,ha,request=fetchJson) {
       const results=[];
       for(let index=0;index<ids.length;index++){
         guard(original);
+        if(budget&&!budget.isCurrent())throw new HttpError(409,'Gas budget notification settings changed.');
         if(!isTest&&JSON.stringify(store.config().notifications)!==JSON.stringify(config))throw new HttpError(409,'Notification settings changed. Check the results on your devices before sending again.');
         const device=selected[index];
         if(!device?.available){results.push({target:ids[index],accepted:false,error:'This notification device is no longer available.'});continue;}
         const entity=device.id.startsWith('entity:'),service=entity?'send_message':device.address.slice(7);
         const payload={message:values.message,...(device.supportsTitle?{title:values.title}:{}),...(entity?{entity_id:device.address}:{})};
+        if(budget?.action&&!entity)payload.data={tag:'cold-harbour-gas-budget',actions:[{action:budget.action,title:'Pause heating today',authenticationRequired:true}]};
         try{
           await request(`${original.url}/api/services/notify/${service}`,{method:'POST',headers:{Authorization:`Bearer ${original.token}`,'Content-Type':'application/json'},body:JSON.stringify(payload)});
           results.push({target:device.id,accepted:true});
@@ -84,5 +86,6 @@ export function createNotifications(store,ha,request=fetchJson) {
       return {accepted,results,message:accepted?'Home Assistant accepted the notification. Check your device to confirm delivery.':'Some devices could not be notified. Check the per-device results before retrying.'};
     }finally{busy=false;}
   }
-  return {discover:()=>discover(),test:body=>deliver(body,true),send:body=>deliver(body,false)};
+  return {discover:()=>discover(),test:body=>deliver(body,true),send:body=>deliver(body,false),
+    sendBudget:({target,title,message,action,isCurrent})=>deliver({title,message},false,{target,action,isCurrent})};
 }

@@ -5,4 +5,4 @@ import { activity } from './activity.js';
 import { boiler } from './boiler.js';
 
 // Each module owns its view and events; integrations and persistence stay on the server.
-export const modules = [boiler,heating,energy,activity,settings];
+export const modules = [heating,boiler,energy,activity,settings];

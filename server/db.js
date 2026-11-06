@@ -194,6 +194,12 @@ export function createStore(directory) {
     source TEXT NOT NULL,day TEXT NOT NULL,at TEXT NOT NULL,kwh REAL,cost REAL,usage_at TEXT,cost_at TEXT,
     PRIMARY KEY(source,at));
     CREATE INDEX IF NOT EXISTS gas_samples_day ON gas_samples(source,day);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS gas_budget_notifications (
+    scope TEXT NOT NULL,target TEXT NOT NULL,day TEXT NOT NULL,action TEXT NOT NULL UNIQUE,
+    accepted INTEGER NOT NULL DEFAULT 0,attempted_at REAL NOT NULL,expires_at REAL NOT NULL,consumed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope,target,day));
+    CREATE TABLE IF NOT EXISTS gas_budget_pauses (
+    source TEXT NOT NULL,day TEXT NOT NULL,timezone TEXT NOT NULL,PRIMARY KEY(source,day,timezone));`);
   return {
     db,
     config() {
@@ -251,6 +257,8 @@ export function createStore(directory) {
       db.prepare('DELETE FROM boiler_frames WHERE received_at < ?').run(new Date(now-86400000).toISOString());
       db.prepare('DELETE FROM heating_samples WHERE at < ?').run(new Date(now-90*86400000).toISOString());
       db.prepare('DELETE FROM gas_samples WHERE at < ?').run(new Date(now-90*86400000).toISOString());
+      db.prepare('DELETE FROM gas_budget_notifications WHERE expires_at < ?').run(now-7*86400000);
+      db.prepare('DELETE FROM gas_budget_pauses WHERE day < ?').run(new Date(now-7*86400000).toISOString().slice(0,10));
     },
     close() { db.close(); },
   };

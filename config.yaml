@@ -1,5 +1,5 @@
 name: Cold Harbour
-version: "0.17.0"
+version: "0.18.0"
 slug: mods
 description: Coordinated boiler and TRV control with Planning mode and Home Assistant energy.
 arch:
@@ -10,7 +10,7 @@ boot: auto
 init: false
 ingress: true
 ingress_port: 8099
-panel_icon: mdi:home-lightning-bolt-outline
+panel_icon: mdi:lighthouse
 panel_title: Cold Harbour
 homeassistant_api: true
 watchdog: "http://[HOST]:8099/health"

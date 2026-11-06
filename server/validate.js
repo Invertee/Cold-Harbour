@@ -2,6 +2,7 @@ import { HttpError } from './http.js';
 import {defaultWeatherPlan} from './smart-thermostat.js';
 import {groupHeatingSchedules} from './heating-plan.js';
 import {defaultRoomControl} from '../public/heating-model.js';
+import {defaults} from './defaults.js';
 
 const fail = message => { throw new HttpError(400,message); };
 export const str = (value, label, max = 200) => typeof value === 'string' && value.length <= max ? value.trim() : fail(`${label} must be text (up to ${max} characters).`);
@@ -15,9 +16,9 @@ export function notificationTarget(value) {
   return target;
 }
 export function validateConfig(section, input, current) {
-  const result = { ...current };
+  const result = { ...(section==='notifications'?defaults.notifications:{}),...current };
   for (const [key,value] of Object.entries(input)) {
-    if (!Object.hasOwn(current,key)) fail(`Unknown setting: ${key}`);
+    if (!Object.hasOwn(result,key)) fail(`Unknown setting: ${key}`);
     result[key] = value;
   }
   if (section === 'general') {
@@ -37,7 +38,18 @@ export function validateConfig(section, input, current) {
     if(!Array.isArray(result.targets)||result.targets.length>20)fail('Choose up to 20 notification devices.');
     result.targets=result.targets.map(notificationTarget);
     if(new Set(result.targets).size!==result.targets.length)fail('Select each notification device only once.');
-    if(result.enabled&&!result.targets.length)fail('Choose at least one notification device before enabling notifications.');
+    const rule=result.gasBudget;
+    if(!rule||typeof rule!=='object'||Array.isArray(rule)||Object.keys(rule).some(key=>!Object.hasOwn(defaults.notifications.gasBudget,key)))fail('Choose valid gas budget notification settings.');
+    result.gasBudget={...defaults.notifications.gasBudget,...rule};
+    const budget=result.gasBudget;
+    bool(budget.enabled,'Gas budget notifications');bool(budget.pauseAction,'Pause heating button');
+    num(budget.thresholdPercent,'Gas budget warning percentage',1,100);
+    if(!Array.isArray(budget.targets)||budget.targets.length>20)fail('Choose up to 20 phones for gas budget warnings.');
+    budget.targets=budget.targets.map(notificationTarget);
+    if(budget.targets.some(target=>!target.startsWith('service:notify.mobile_app_')))fail('Gas budget warnings need Companion app phones.');
+    if(new Set(budget.targets).size!==budget.targets.length)fail('Select each gas budget phone only once.');
+    if(budget.enabled&&!budget.targets.length)fail('Choose at least one phone for gas budget warnings.');
+    if(result.enabled&&!result.targets.length&&!(budget.enabled&&budget.targets.length))fail('Choose at least one notification device before enabling notifications.');
   } else if (section === 'energy') {
     for (const key of ['electricityMeter','gasMeter']) result[key] = str(result[key],'Meter',240);
     for (const key of Object.keys(result).filter(key=>!['electricityMeter','gasMeter'].includes(key))) result[key] = entity(result[key],'sensor');
@@ -71,6 +83,7 @@ export function validateRoom(input) {
   room.sensorFreshnessMinutes=input.sensorFreshnessMinutes==null?null:num(input.sensorFreshnessMinutes,'Room sensor freshness',5,1440);
   room.targetOffset=num(input.targetOffset ?? room.comfort-20,'Room target offset',-10,10);
   room.awayOffset=num(input.awayOffset ?? room.eco-16,'Room low temperature offset',-15,15);
+  room.sunExposure=num(input.sunExposure ?? 0,'Sun impact',0,100);
   if (room.eco > room.comfort) fail('Eco temperature must not exceed comfort temperature.');
   room.radiatorEntity = entity(input.radiatorEntity || '', 'climate');
   if(input.heatControl!==undefined&&(!input.heatControl||typeof input.heatControl!=='object'||Array.isArray(input.heatControl)))fail('Choose valid room heating controls.');
