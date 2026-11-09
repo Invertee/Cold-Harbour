@@ -31,7 +31,7 @@ export async function render({background=false,refresh=false}={}) {
     clearTimeout(retryTimer);retryTimer=null;
     connectionInterrupted=false;document.querySelector('#connection-notice').hidden=true;
     document.querySelector('#system-status').textContent='Server online';
-    const pill=document.querySelector('#mode-pill');pill.textContent=ctx.config.thermostat?.mode==='active'?'Smart Thermostat · Active selected':'Smart Thermostat · Planning';pill.className=ctx.config.thermostat?.mode==='active'?'pill amber':'pill green';pill.hidden=false;
+    const pill=document.querySelector('#mode-pill');pill.textContent=module.id==='lighting'?(ctx.config.lighting.enabled?'Daylight lighting · Enabled':'Daylight lighting · Paused'):ctx.config.thermostat?.mode==='active'?'Smart Thermostat · Active selected':'Smart Thermostat · Planning';pill.className=module.id==='lighting'?(ctx.config.lighting.enabled?'pill green':'pill neutral'):ctx.config.thermostat?.mode==='active'?'pill amber':'pill green';pill.hidden=false;
     document.querySelector('#today').textContent=new Intl.DateTimeFormat('en-GB',{timeZone:ctx.config.general.timezone,weekday:'short',day:'numeric',month:'short'}).format(new Date());
   }catch(err){
     if(version!==generation)return;

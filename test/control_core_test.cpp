@@ -54,7 +54,7 @@ int main(){
   observation.update(dhw_before,true,true,false);assert(!std::strcmp(observation.update(dhw_before+120000,true,false,false),"idle"));
   auto c=ready();assert(c.update(1000)==43.5f);
   c.remote_mode=true;assert(c.accept_remote(2000,1000,90,true,50));assert(c.update(2000)==50);
-  assert(c.update(90999)==50);assert(c.update(91000)==43.5f);assert(strstr(c.mode(),"PID"));
+  assert(c.update(90999)==50);assert(c.update(91000)==0);assert(c.handover_waiting(91000));assert(strstr(c.mode(),"idle"));
   assert(c.accept_remote(100000,100000,90,false,0));assert(c.update(100001)==0);
   assert(!c.accept_remote(100000,100000,91,true,50));assert(!c.accept_remote(100000,100000,90,true,53));assert(!c.accept_remote(100000,100000,90,false,35));assert(!c.accept_remote(120000,100000,90,true,50));
   c.local_temperature=6;c.comfort_enabled=false;assert(c.update(100002)==40);assert(c.frost_active());c.local_temperature=8;assert(c.update(100003)==40);c.local_temperature=9;assert(c.update(100004)==0);
@@ -62,7 +62,29 @@ int main(){
   c=ready();c.fault=true;assert(c.update(2000)==0);c.fault=false;c.ot_fresh=false;assert(c.update(2001)==0);
   c=ready();c.pid_valid=false;assert(c.update(2000)==0);c.pid_valid=true;c.pid_level=NAN;assert(c.update(2001)==0);
   c=ready();c.min_off_ms=180000;assert(c.update(179999)==0);assert(c.update(180000)>0);c.pid_level=0;assert(c.update(180001)==0);c.pid_level=1;assert(c.update(200000)==0);c.local_temperature=6;assert(c.update(200001)==40);
-  c=ready();c.remote_mode=true;const uint32_t before=0xfffff000;assert(c.accept_remote(before,before,90,true,45));assert(c.update(before+60000)==45);assert(c.update(before+90000)==43.5f);
+  c=ready();c.remote_mode=true;const uint32_t before=0xfffff000;assert(c.accept_remote(before,before,90,true,45));assert(c.update(before+60000)==45);assert(c.update(before+90000)==0);assert(c.update(before+269999)==0);assert(c.update(before+270000)==43.5f);
   c=ready();assert(!c.accept_remote(1000,1000,90,true,50));assert(c.update(1000)==43.5f);
-  std::cout<<"Controller tests passed: bounded capture/expiry/acknowledgements, runtime settings, DHW phases, PID, leases, frost, faults, sensor loss, anti-cycling and rollover.\n";
+  // Loss of an OFF lease must not briefly start PID while Wi-Fi reconnects.
+  c=ready();c.remote_mode=true;assert(c.accept_remote(1000,1000,30,false,0));assert(c.update(1000)==0);
+  assert(c.update(31000)==0);assert(c.handover_waiting(31000));
+  assert(c.accept_remote(32000,32000,90,true,50));assert(c.update(32000)==0);
+  assert(c.update(122000)==0); // Second expiry does not restart the wait.
+  assert(c.update(210999)==0);assert(c.update(211000)==43.5f);assert(!c.handover_waiting(211000));
+  // A live renewed command can resume at the original deadline.
+  c=ready();c.remote_mode=true;assert(c.accept_remote(1000,1000,30,true,50));assert(c.update(1000)==50);
+  assert(c.update(31000)==0);assert(c.accept_remote(200000,200000,90,true,48));assert(c.update(210999)==0);assert(c.update(211000)==48);
+  // Explicit release / a local mode change also waits; new episodes get a new wait.
+  c.clear_remote();assert(c.update(212000)==0);assert(c.update(392000)==43.5f);
+  assert(c.accept_remote(400000,400000,90,true,50));assert(c.update(400000)==50);c.remote_mode=false;
+  assert(c.update(401000)==0);assert(c.update(580999)==0);assert(c.update(581000)==43.5f);
+  // Frost, faults and permission retain priority throughout the handover.
+  c=ready();c.remote_mode=true;assert(c.accept_remote(1000,1000,30,true,50));assert(c.update(1000)==50);assert(c.update(31000)==0);
+  c.local_temperature=6;assert(c.update(31001)==40);c.fault=true;assert(c.update(31002)==0);c.fault=false;c.ot_fresh=false;assert(c.update(31003)==0);
+  c.ot_fresh=true;c.comfort_enabled=false;assert(c.update(31004)==40);c.local_temperature=9;assert(c.update(31005)==0);
+  c.comfort_enabled=true;c.pid_valid=false;assert(c.update(211000)==0);c.pid_valid=true;assert(c.update(211001)==43.5f);
+  // A configured shorter handover still respects the existing minimum off time.
+  c=ready();c.handover_idle_ms=30000;c.min_off_ms=180000;c.remote_mode=true;
+  assert(c.accept_remote(200000,200000,30,true,50));assert(c.update(200000)==50);assert(c.update(230000)==0);
+  assert(c.update(260000)==0);assert(strstr(c.mode(),"Minimum off"));assert(c.update(410000)>0);
+  std::cout<<"Controller tests passed: bounded capture/expiry/acknowledgements, runtime settings, DHW phases, PID, leases, handover idle/reconnect/release, frost, faults, sensor loss, anti-cycling and rollover.\n";
 }

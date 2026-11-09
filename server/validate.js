@@ -64,11 +64,40 @@ export function validateConfig(section, input, current) {
     num(result.staleMinutes,'Sensor freshness',5,180);
   } else if(section==='heatingPlan') {
     return validateHeatingPlan(result);
+  } else if(section==='lighting') {
+    return validateLighting(result);
   } else if (section === 'boiler') {
     result.deviceId=str(result.deviceId,'Controller ID',64);
     if(!/^[a-z0-9_-]{1,64}$/.test(result.deviceId)) fail('Use a controller ID containing lowercase letters, numbers, hyphens or underscores.');
     num(result.historyDays,'Boiler history days',1,90);
   } else fail('Unknown settings section.');
+  return result;
+}
+
+export function validateLighting(input){
+  const result={...input};
+  bool(result.enabled,'Daylight lighting');
+  num(result.transitionSeconds,'Transition time in seconds',30,300);
+  num(result.warmElevation,'Warm sun elevation',-18,0);
+  num(result.coolElevation,'Cool sun elevation',10,90);
+  if(!Array.isArray(result.groups)||result.groups.length>50)fail('Choose up to 50 light groups.');
+  const ids=new Set(),entities=new Set();
+  result.groups=result.groups.map(group=>{
+    if(!group||typeof group!=='object'||Array.isArray(group)||Object.keys(group).some(key=>!['id','name','enabled','minKelvin','maxKelvin','entities'].includes(key)))fail('Choose valid light group settings.');
+    const id=str(group.id,'Light group ID',80),name=str(group.name,'Group name',80);
+    if(!/^[a-zA-Z0-9_-]+$/.test(id)||ids.has(id))fail('Each light group needs a unique ID.');
+    if(!name)fail('Give each light group a name.');
+    ids.add(id);bool(group.enabled,'Light group');
+    num(group.minKelvin,'Warmest temperature',1000,10000);num(group.maxKelvin,'Coolest temperature',1000,10000);
+    if(!Number.isInteger(group.minKelvin)||!Number.isInteger(group.maxKelvin)||group.minKelvin>group.maxKelvin)fail('Use whole Kelvin values with the warmest temperature at or below the coolest.');
+    if(!Array.isArray(group.entities)||group.entities.length<1||group.entities.length>100)fail('Choose between 1 and 100 lights per group.');
+    const selected=group.entities.map(value=>{
+      const entityId=entity(value,'light');
+      if(!entityId||entities.has(entityId))fail('Each light can belong to only one group.');
+      entities.add(entityId);return entityId;
+    });
+    return {id,name,enabled:group.enabled,minKelvin:group.minKelvin,maxKelvin:group.maxKelvin,entities:selected};
+  });
   return result;
 }
 

@@ -60,6 +60,7 @@ class ColdHarbour : public PollingComponent {
   void set_min_flow(float v){core_.min_flow=v;}
   void set_max_flow(float v){core_.max_flow=v;}
   void set_ha_stale_after(uint32_t v){ha_stale_ms_=v;}
+  void set_handover_idle(uint32_t v){core_.handover_idle_ms=v;}
   void set_remote_mode(bool enabled){if(core_.remote_mode!=enabled){core_.remote_mode=enabled;core_.clear_remote();reset_pid_();}}
   void set_comfort_enabled(bool enabled){if(core_.comfort_enabled!=enabled){core_.comfort_enabled=enabled;reset_pid_();}}
   void set_pid_level(float value){core_.pid_level=value;pid_at_=millis();pid_seen_=true;}
@@ -71,7 +72,7 @@ class ColdHarbour : public PollingComponent {
   std::string temperature_source() const;
   std::string effective_mode() const {return core_.mode();}
   float requested_flow() const{return flow_;}
-  bool remote_active() const{return core_.remote_active(millis()) && core_.comfort_enabled && !core_.fault && core_.ot_fresh && !core_.frost_active();}
+  bool remote_active() const{return core_.remote_active(millis()) && !core_.handover_waiting(millis()) && core_.comfort_enabled && !core_.fault && core_.ot_fresh && !core_.frost_active();}
   bool frost_active() const{return core_.frost_active();}
   float lease_remaining() const{return core_.lease_remaining(millis());}
   float exchange_failures() const{return failures_;}

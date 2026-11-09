@@ -1,7 +1,7 @@
 name: Cold Harbour
-version: "0.18.0"
+version: "0.19.1"
 slug: mods
-description: Coordinated boiler and TRV control with Planning mode and Home Assistant energy.
+description: Coordinated heating, daylight lighting and Home Assistant energy.
 arch:
   - aarch64
   - amd64

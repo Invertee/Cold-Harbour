@@ -13,6 +13,7 @@ import { validateConfig,validateRoom,validateRule,str } from './validate.js';
 import {registerBackups,MAX_BACKUP_BYTES} from './backups.js';
 import {createNotifications} from './integrations/notifications.js';
 import {createGasBudgetNotifications} from './modules/gas-budget-notifications.js';
+import {lightingModule} from './modules/lighting.js';
 import metadata from '../package.json' with {type:'json'};
 
 const publicDir = fileURLToPath(new URL('../public/',import.meta.url));
@@ -24,7 +25,7 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
   context.notifications=createNotifications(store,ha,haRequest);
   const routes = new Map();
   const route = (method,path,handler)=>{ const key=`${method} ${path}`; if(routes.has(key)) throw new Error(`Duplicate route ${key}`); routes.set(key,handler); };
-  const installedModules = [energyModule,heatingModule,boilerModule,...modules];
+  const installedModules = [energyModule,heatingModule,boilerModule,lightingModule,...modules];
   for (const module of installedModules) module.register({route,context});
   context.gasBudgetNotifications=createGasBudgetNotifications(context,{Socket:haActionSocket});
   registerBackups({route,context});
@@ -35,6 +36,8 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
     ticking = (async()=>{
       await ha.poll();
       const now = Date.now();
+      // Lighting network calls run separately so a slow bulb cannot delay heating.
+      void context.lighting.sync(now).catch(()=>{});
       captureHomeAssistantEnergy(context,now);
       context.gasBudget.capture(now);
       await context.radiators.sync();
@@ -72,7 +75,7 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
   route('POST','/api/refresh',async()=>{ await tick(); return {ha:ha.status}; });
   route('POST','/api/settings',async({body})=>{
     const section = str(body.section,'Section',40);
-    const current = ['general','homeAssistant','notifications','energy','gasBudget','heating','heatingPlan','boiler'].includes(section) ? store.config()[section] : null;
+    const current = ['general','homeAssistant','notifications','energy','gasBudget','heating','heatingPlan','boiler','lighting'].includes(section) ? store.config()[section] : null;
     if (!current || !body.values || typeof body.values !== 'object' || Array.isArray(body.values)) throw new HttpError(400,'Choose a settings section and values.');
     const input = {...body.values};
     const secrets = [];
@@ -155,6 +158,6 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
       };
       void poll();
     },
-    async close() { closed=true;clearTimeout(timer);const closingActions=context.gasBudgetNotifications.close();await ticking;await notifying;await closingActions;await Promise.all([new Promise(resolve=>server.close(resolve)),new Promise(resolve=>deviceServer.close(resolve))]);store.close(); },
+    async close() { closed=true;clearTimeout(timer);const closingActions=context.gasBudgetNotifications.close(),closingLights=context.lighting.close();await ticking;await notifying;await closingActions;await closingLights;await Promise.all([new Promise(resolve=>server.close(resolve)),new Promise(resolve=>deviceServer.close(resolve))]);store.close(); },
   };
 }

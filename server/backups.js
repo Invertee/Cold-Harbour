@@ -36,6 +36,7 @@ export function validateBackupData(data){
   // Backups from before notification settings existed remain importable.
   if(object(data.config)&&!Object.hasOwn(data.config,'notifications'))data={...data,config:{...data.config,notifications:structuredClone(defaults.notifications)}};
   if(object(data.config)&&!Object.hasOwn(data.config,'gasBudget'))data={...data,config:{...data.config,gasBudget:structuredClone(defaults.gasBudget)}};
+  if(object(data.config)&&!Object.hasOwn(data.config,'lighting'))data={...data,config:{...data.config,lighting:structuredClone(defaults.lighting)}};
   if(object(data.config?.notifications)&&!Object.hasOwn(data.config.notifications,'gasBudget'))data={...data,config:{...data.config,notifications:{...data.config.notifications,gasBudget:structuredClone(defaults.notifications.gasBudget)}}};
   const legacyPeriods=data.config?.gasBudget?.periods;
   if(object(data.config?.gasBudget)&&Object.hasOwn(data.config.gasBudget,'periods')){
@@ -140,7 +141,7 @@ export function registerBackups({route,context}){
       store.log('backup','Configuration imported. Smart Thermostat returned to Planning; review connections and room mappings before selecting Active.');
       store.db.exec('COMMIT');
     }catch(error){store.db.exec('ROLLBACK');throw error;}
-    ha.invalidate();context.thermostat.reset();context.boiler.reset();previews.clear();
+    ha.invalidate();context.thermostat.reset();context.boiler.reset();context.lighting.reset();previews.clear();
     return {ok:true,mode:'planning',rooms:data.rooms.length};
   });
 }

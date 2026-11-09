@@ -1,6 +1,14 @@
-# Cold Harbour ESPHome configuration 0.9.0
+# Cold Harbour ESPHome configuration 0.19.1
 
-Targets the LILYGO T-ETH-Lite ESP32 / RTL8201 with the DIYLESS-style OpenTherm shield and existing Dallas sensor. Wi-Fi is enabled. Ethernet and LEDs remain commented out. The firmware supports Local PID and signed Cold Harbour control. App 0.14.0 adds Planning and Active: Planning releases authority to PID; Active can renew bounded boiler commands when the ESP is in Cold Harbour mode and app readiness passes. No firmware source change or upload is required for existing protocol-revision-two devices.
+## Idle wait when handing control back to Local PID
+
+Version 0.19.1 adds a **three-minute idle wait** when an active Cold Harbour command expires or is released, including when you select PID after remote operation. Normal central heating demand stays off during this wait, even if the connection returns. Further dropouts during the same wait do not restart its timer. After the wait, the latest fresh Cold Harbour command or valid Local PID demand can resume. The existing minimum off interval still applies. Frost protection remains immediate; faults and missing OpenTherm feedback still inhibit heating.
+
+The controller status shows **Control handover: idle**. A Home Assistant entity becoming unavailable by itself is not evidence that heating authority changed; the wait starts when the ESP actually loses its valid remote command. Startup directly into PID keeps the existing startup behaviour.
+
+To install, replace the complete `components/cold_harbour/` folder, then compile and upload with your existing ESPHome configuration and credentials. Existing main YAML files automatically get the three-minute default; optionally add `handover_idle: 3min` under `cold_harbour:` to choose a period between 30 seconds and 15 minutes. **An app-only update cannot apply this protection on the ESP.** No Wi-Fi, Ethernet, sensor calibration or PID tuning changes are required for this update.
+
+Targets the LILYGO T-ETH-Lite ESP32 / RTL8201 with the DIYLESS-style OpenTherm shield and existing Dallas sensor. Wi-Fi is enabled. Ethernet and LEDs remain commented out. The firmware supports Local PID and signed Cold Harbour control. App 0.14.0 added Planning and Active: Planning releases authority to PID; Active can renew bounded boiler commands when the ESP is in Cold Harbour mode and app readiness passes. That app feature supported existing protocol-revision-two devices; the new 0.19.1 idle wait requires a firmware upload as described above.
 
 ## App Planning and Active
 

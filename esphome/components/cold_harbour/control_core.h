@@ -30,6 +30,7 @@ class ControlCore {
   bool local_valid{false}, pid_valid{false};
   float local_temperature{NAN}, pid_level{0};
   uint32_t min_off_ms{180000};
+  uint32_t handover_idle_ms{180000};
   void start(uint32_t now) { last_off_=now; }
   void clear_remote() { remote_valid_=false; }
   bool accept_remote(uint32_t now,uint32_t requested_at,uint32_t lease_s,bool enabled,float flow) {
@@ -39,8 +40,15 @@ class ControlCore {
   bool remote_active(uint32_t now) const {return remote_mode && remote_valid_ && now-remote_at_<lease_ms_;}
   uint32_t lease_remaining(uint32_t now) const {return remote_active(now)?(lease_ms_-(now-remote_at_)+999)/1000:0;}
   bool frost_active() const {return frost_;}
+  bool handover_waiting(uint32_t now) const {return handover_wait_ && now-handover_at_<handover_idle_ms;}
   const char *mode() const {return mode_;}
   float update(uint32_t now) {
+    const bool remote=remote_active(now);
+    // Latch one idle interval when remote authority is lost. A renewed lease
+    // cannot skip it, and further dropouts during the wait cannot extend it.
+    if(was_remote_ && !remote && !handover_wait_){handover_wait_=true;handover_at_=now;}
+    was_remote_=remote;
+    if(handover_wait_ && now-handover_at_>=handover_idle_ms)handover_wait_=false;
     if(!local_valid)frost_=false;
     else if(local_temperature<=7)frost_=true;
     else if(local_temperature>=9)frost_=false;
@@ -49,7 +57,8 @@ class ControlCore {
     else if(!ot_fresh){mode_="OpenTherm unavailable";}
     else if(frost_){mode_="Local frost protection";wanted=std::min(40.0f,max_flow);}
     else if(!comfort_enabled){mode_="Central heating paused";}
-    else if(remote_active(now)){mode_="Cold Harbour";wanted=remote_enabled_?remote_flow_:0;}
+    else if(handover_waiting(now)){mode_="Control handover: idle";}
+    else if(remote){mode_="Cold Harbour";wanted=remote_enabled_?remote_flow_:0;}
     else if(pid_valid && std::isfinite(pid_level)){
       mode_=remote_mode?"Cold Harbour unavailable: PID":"PID";
       const float level=std::clamp(pid_level,0.0f,1.0f);
@@ -60,8 +69,8 @@ class ControlCore {
     last_flow_=wanted;return wanted;
   }
  private:
-  bool remote_valid_{false},remote_enabled_{false},frost_{false};
-  uint32_t remote_at_{0},lease_ms_{0},last_off_{0};
+  bool remote_valid_{false},remote_enabled_{false},frost_{false},was_remote_{false},handover_wait_{false};
+  uint32_t remote_at_{0},lease_ms_{0},last_off_{0},handover_at_{0};
   float remote_flow_{0},last_flow_{0};
   const char *mode_{"Starting"};
 };

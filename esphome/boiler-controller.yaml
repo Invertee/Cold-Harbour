@@ -85,6 +85,7 @@ cold_harbour:
   min_flow: ${min_flow}
   max_flow: ${max_flow}
   ha_stale_after: 10min
+  handover_idle: 3min
   update_interval: 1s
 
 packages:

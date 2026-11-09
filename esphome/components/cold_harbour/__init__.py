@@ -29,6 +29,8 @@ def validate_config(config):
         raise cv.Invalid("shared_key must be the 64-character key created by Cold Harbour")
     if config["min_flow"] > config["max_flow"]:
         raise cv.Invalid("min_flow must not exceed max_flow")
+    if not 30000 <= config["handover_idle"].total_milliseconds <= 900000:
+        raise cv.Invalid("handover_idle must be between 30 seconds and 15 minutes")
     if not re.fullmatch(r"[a-z0-9_-]{1,64}", config["device_id"]):
         raise cv.Invalid("device_id must contain lowercase letters, numbers, hyphens or underscores")
     return config
@@ -48,6 +50,7 @@ CONFIG_SCHEMA = cv.All(cv.Schema({
     cv.Optional("min_flow", default=35): cv.float_range(min=30,max=60),
     cv.Optional("max_flow", default=52): cv.float_range(min=30,max=65),
     cv.Optional("ha_stale_after", default="10min"): cv.positive_time_period_milliseconds,
+    cv.Optional("handover_idle", default="3min"): cv.positive_time_period_milliseconds,
 }).extend(cv.polling_component_schema("1s")),validate_config)
 
 async def to_code(config):
@@ -59,5 +62,6 @@ async def to_code(config):
     for option in ("server_url","shared_key","device_id","min_flow","max_flow"):
         cg.add(getattr(var, "set_" + option)(config[option]))
     cg.add(var.set_ha_stale_after(config["ha_stale_after"].total_milliseconds))
+    cg.add(var.set_handover_idle(config["handover_idle"].total_milliseconds))
     esp32.request_http_client()
     esp32.require_certificate_bundle()

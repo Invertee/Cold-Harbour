@@ -2,6 +2,7 @@ import { fetchJson,HttpError } from '../http.js';
 import {readEntityRegistry,isCaptureEntry} from './ha-registry.js';
 import {createWeatherForecasts} from './weather-forecasts.js';
 import {trvzbContext,prepareTrvzb} from './trvzb.js';
+import {lightCapabilities} from '../../public/lighting-model.js';
 
 export function connection(store) {
   if (process.env.SUPERVISOR_TOKEN) return { url: 'http://supervisor/core', token: process.env.SUPERVISOR_TOKEN };
@@ -106,6 +107,18 @@ export function createHomeAssistant(store, request = fetchJson, registryRequest=
       }
       await request(`${url}/api/services/climate/${service}`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)});
       if(version!==generation)throw new HttpError(409,'Home Assistant changed; check the radiator in Home Assistant.');
+    },
+    async applyLightTemperature(entityId,kelvin,transitionSeconds,isCurrent){
+      const state=states.find(state=>state.entity_id===entityId),capability=lightCapabilities(state),version=generation;
+      const settings=store.config().lighting;
+      if(typeof isCurrent!=='function'||!isCurrent()||!settings.enabled||!settings.groups.some(group=>group.enabled&&group.entities.includes(entityId)))throw new HttpError(409,'Daylight lighting settings changed.');
+      if(!this.status.connected||state?.state!=='on'||!capability.supported)throw new HttpError(409,'Wait for a connected, switched-on light with colour temperature support.');
+      if(!Number.isInteger(kelvin)||kelvin<capability.minKelvin||kelvin>capability.maxKelvin||!Number.isFinite(transitionSeconds)||transitionSeconds<0||transitionSeconds>300)throw new HttpError(400,'Invalid light temperature or transition.');
+      const body={entity_id:entityId,color_temp_kelvin:kelvin};
+      if(capability.transition)body.transition=transitionSeconds;
+      const {url,token}=connection(store);
+      await request(`${url}/api/services/light/turn_on`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(version!==generation||!isCurrent())throw new HttpError(409,'Daylight lighting settings changed.');
     },
     captureStatus(now=Date.now()){
       const fresh=this.status.connected&&now-Date.parse(fetchedAt)<45000;

@@ -12,6 +12,8 @@ export function clockInput(label,name,value){
 }
 export function bindClockInputs(form){for(const input of form.querySelectorAll('[data-clock-input]'))input.onchange=()=>{const part=name=>input.querySelector(`[data-clock-part="${name}"]`).value;input.querySelector('input').value=clockValue(part('hour'),part('minute'),part('period'));};}
 export const icons = {
+ lighting:'<path d="M9 18h6m-5 3h4M8 13a6 6 0 1 1 8 0c-1 1-1 2-1 3H9c0-1 0-2-1-3Z"/>',
+ sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
  settings:'<path d="m9 3 1-1h4l1 1 .5 2 2 .9 2-.5 2 3.4-1.5 1.5v2.4l1.5 1.5-2 3.4-2-.5-2 .9-.5 2-1 1h-4l-1-1-.5-2-2-.9-2 .5-2-3.4 1.5-1.5v-2.4L2 8.3l2-3.4 2 .5 2-.9z"/><circle cx="12" cy="11.5" r="3"/>',
  energy:'<path d="m13 2-3 8H5l6 4-1 8 9-12h-6z"/>',
  heating:'<path d="M9 14.5V5a3 3 0 0 1 6 0v9.5a5 5 0 1 1-6 0Z"/><path d="M12 9v8m0 0h.01"/>',

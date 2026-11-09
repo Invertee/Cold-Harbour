@@ -1,4 +1,5 @@
 import {defaultHeatingPlan} from './heating-plan.js';
+import {defaultLighting} from '../public/lighting-model.js';
 export const defaults = {
   general: { mode: 'listen', timezone: 'Europe/London' },
   homeAssistant: { url: '', powerEntity: '', captureEntity: '' },
@@ -13,6 +14,7 @@ export const defaults = {
   heatingPlan:defaultHeatingPlan,
   boiler: { deviceId:'boiler-controller', historyDays:30 },
   thermostat: {mode:'planning'},
+  lighting:defaultLighting,
 };
 
 export const sampleRooms = [
