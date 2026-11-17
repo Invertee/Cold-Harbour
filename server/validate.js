@@ -16,7 +16,7 @@ export function notificationTarget(value) {
   return target;
 }
 export function validateConfig(section, input, current) {
-  const result = { ...(section==='notifications'?defaults.notifications:{}),...current };
+  const result = { ...(['notifications','gasBudget'].includes(section)?defaults[section]:{}),...current };
   for (const [key,value] of Object.entries(input)) {
     if (!Object.hasOwn(result,key)) fail(`Unknown setting: ${key}`);
     result[key] = value;
@@ -59,6 +59,7 @@ export function validateConfig(section, input, current) {
     if(!['monitor','pause'].includes(result.action))fail('Choose whether to monitor or pause heating at the budget.');
     num(result.dailyLimit,'Daily gas budget',0.01,10000);
     num(result.staleMinutes,'Gas reading freshness',5,360);
+    num(result.emergencyTempC,'Emergency room temperature °C',7,25);
   } else if (section === 'heating') {
     if (!activities.includes(result.activity)) fail('Invalid household activity.');
     num(result.staleMinutes,'Sensor freshness',5,180);

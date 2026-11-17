@@ -63,6 +63,8 @@ export const heatingView={
 
   this.roomChartState.hidden=[...new Set([...(this.roomChartState.hidden || []).filter(key=>!key.startsWith('target_')),...(this.showRoomTargets?[]:targets.map(s=>s.key))])];
 
+  this.boilerChartState.hidden ??= ['pid_output_pct'];
+
   let rooms,demand;
 
   rooms=bindChart(document.querySelector('#heating-room-chart'),{...common,bands:this.showRoomPhases?this.history.phaseBands:[],bandStyles:this.showRoomPhases?phaseStyles:[],state:this.roomChartState,series:[...this.history.rooms.map((r,i)=>({key:`room_${r.id}`,label:r.name,colour:colours[i%colours.length]})),{key:'house_target_c',label:'House target',colour:'#344b59',dashed:true},...targets],extraTooltip:row=>[['Schedule period',row.activity],['Schedule base target',`${fixed(row.active_target_c)} °C`],['Household',row.occupancy],['Boiler phase',phaseNames[row.thermal_context] || 'Unknown'],['Boiler flow request',`${fixed(row.requested_flow_c)} °C`],['Boiler modulation',`${fixed(row.modulation_pct)} %`],['Outside',`${fixed(row.outdoor_c)} °C`],['Smart plan',row.planned_reason]],onRangeChange:(range,zoomed)=>demand?.setView(range,zoomed)});

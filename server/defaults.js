@@ -9,7 +9,7 @@ export const defaults = {
     electricityDemand:'', electricityToday:'', electricityTodayCost:'', electricityPrevious:'', electricityPreviousCost:'', electricityRate:'',
     gasToday:'', gasTodayCost:'', gasPrevious:'', gasPreviousCost:'', gasRate:'',
   },
-  gasBudget:{enabled:false,unit:'kwh',dailyLimit:50,action:'monitor',staleMinutes:90},
+  gasBudget:{enabled:false,unit:'kwh',dailyLimit:50,action:'monitor',staleMinutes:90,emergencyTempC:7},
   heating: { activity: 'auto', staleMinutes: 30 },
   heatingPlan:defaultHeatingPlan,
   boiler: { deviceId:'boiler-controller', historyDays:30 },

@@ -20,7 +20,7 @@ export function smartThermostatPlan(rooms,settings,states,now){
  const weather={...defaultWeatherPlan,...settings.weather},outdoor=outdoorReading(weather,states,now);
  const usable=rooms.filter(r=>r.fresh),high=usable.filter(r=>r.priority==='high'&&r.callingForHeat),low=usable.filter(r=>r.priority==='low'&&r.callingForHeat);
  // Safety/setback demand is retained, but comfort demand from high rooms leads.
- const frost=usable.filter(r=>r.current<7),candidates=frost.length?frost:high.length?high:low;
+ const frost=usable.filter(r=>r.current<7||r.emergencyHeating),candidates=frost.length?frost:high.length?high:low;
  const lead=[...candidates].sort((a,b)=>(frost.length?a.current-b.current:heatingDeficit(b)-heatingDeficit(a))||a.id.localeCompare(b.id))[0] || null;
  const kind=frost.length?'frost':high.length?'comfort':low.length?'setback':usable.length?'satisfied':'unavailable';
  const heat=Boolean(lead),target=lead?.target ?? settings.houseTarget;
@@ -30,6 +30,7 @@ export function smartThermostatPlan(rooms,settings,states,now){
  const correction=heat?response.correctionC:0;
  const flow=heat?Math.min(response.flowC,frost.length?40:weather.maxFlow):0;
  const sunCoasting=usable.filter(r=>r.coasting&&r.sunCompensation?.reductionC>0);
- const reason=kind==='unavailable'?'No fresh room readings; Local PID remains the fallback.':kind==='satisfied'?sunCoasting.length?`Allowing for sunshine in ${sunCoasting.map(r=>r.name).join(', ')}; no room currently needs heat.`:'All reporting rooms have reached their scheduled targets.':kind==='frost'?`${lead.name} is below 7°C; room frost protection takes precedence.`:`${lead.name} is ${lead.deficit.toFixed(1)}°C below its ${kind==='comfort'?'high-priority':'low temperature'} target.${lead.sunCompensation?.reductionC>0?' Heating is eased to allow for sunshine.':''}`;
+ const frostReason=lead?.emergencyHeating?lead.reason:lead?`${lead.name} is below 7°C; room frost protection takes precedence.`:'';
+ const reason=kind==='unavailable'?'No fresh room readings; Local PID remains the fallback.':kind==='satisfied'?sunCoasting.length?`Allowing for sunshine in ${sunCoasting.map(r=>r.name).join(', ')}; no room currently needs heat.`:'All reporting rooms have reached their scheduled targets.':kind==='frost'?frostReason:`${lead.name} is ${lead.deficit.toFixed(1)}°C below its ${kind==='comfort'?'high-priority':'low temperature'} target.${lead.sunCompensation?.reductionC>0?' Heating is eased to allow for sunshine.':''}`;
  return {planningOnly:true,mode:'Smart Thermostat',heat,kind,leadRoomId:lead?.id || null,reason,flowC:flow,highDemandCount:high.length,lowDemandCount:low.length,missingRooms:rooms.filter(r=>!r.fresh).map(r=>r.id),weather:{enabled:weather.enabled,status:!weather.enabled?'disabled':outdoor?'current':'unavailable',outdoor,loadFraction:load,baseFlowC:baseFlow,correctionC:correction,taperReductionC:heat?response.taperReductionC:0,taperFraction:response.taperFraction,model:'Adjustable heating curve · manual tuning',fallback:weather.enabled&&!outdoor?'Weather unavailable; using the minimum flow plus room correction.':null}};
 }

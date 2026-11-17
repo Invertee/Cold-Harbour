@@ -36,6 +36,7 @@ export function validateBackupData(data){
   // Backups from before notification settings existed remain importable.
   if(object(data.config)&&!Object.hasOwn(data.config,'notifications'))data={...data,config:{...data.config,notifications:structuredClone(defaults.notifications)}};
   if(object(data.config)&&!Object.hasOwn(data.config,'gasBudget'))data={...data,config:{...data.config,gasBudget:structuredClone(defaults.gasBudget)}};
+  if(object(data.config?.gasBudget)&&!Object.hasOwn(data.config.gasBudget,'emergencyTempC'))data={...data,config:{...data.config,gasBudget:{...data.config.gasBudget,emergencyTempC:defaults.gasBudget.emergencyTempC}}};
   if(object(data.config)&&!Object.hasOwn(data.config,'lighting'))data={...data,config:{...data.config,lighting:structuredClone(defaults.lighting)}};
   if(object(data.config?.notifications)&&!Object.hasOwn(data.config.notifications,'gasBudget'))data={...data,config:{...data.config,notifications:{...data.config.notifications,gasBudget:structuredClone(defaults.notifications.gasBudget)}}};
   const legacyPeriods=data.config?.gasBudget?.periods;

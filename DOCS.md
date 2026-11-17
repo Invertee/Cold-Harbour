@@ -32,3 +32,11 @@ Each bulb's target is limited to the overlap between its reported capabilities a
 Groups and lighting settings persist across restarts and are included in encrypted configuration backups. Older backups without lighting settings restore with daylight lighting disabled.
 
 Home Assistant references: [Sun integration](https://www.home-assistant.io/integrations/sun/), [light capabilities and transitions](https://contributors.home-assistant.io/core/entities/light/).
+
+# Heating budget emergency temperature
+
+Open **Energy → Heating plan & budget → Daily gas budget** and set **Emergency room temperature °C**, then save the heating plan. The default is 7°C; the setting accepts 7–25°C and is included in configuration backups. Existing installations and older backups use 7°C automatically.
+
+In Smart Thermostat **Active** mode, a room below this temperature requests heat even when the daily gas limit, a schedule allocation or a manual budget pause would normally stop heating. Only rooms needing emergency heat request their radiators to open; other rooms remain paused. A room warms to 0.5°C above the emergency temperature before its budget pause resumes. For example, a 10°C setting starts heating below 10°C and stops emergency heating at 10.5°C. Emergency gas use still counts towards the budget.
+
+While the budget is enabled, the emergency temperature also acts as a minimum when the budget is still available and a scheduled target is lower. Normal heating above this minimum continues as usual. Emergency heating uses fresh mapped room temperatures and overrides sunshine reductions and early coasting when needed to reach the recovery temperature. The Heating and Energy pages explain when it overrides the budget. Planning mode only previews the request. Normal boiler readiness, ESP mode, heating permission, fault checks and radiator confirmation still apply; the device's local frost protection and fallback controls remain separate.

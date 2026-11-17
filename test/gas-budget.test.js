@@ -92,7 +92,8 @@ test('caps reset by the configured local day and do not leak across meter mappin
 
 test('daily budget settings and per-schedule shares validate independently',()=>{
  assert.doesNotThrow(()=>validateConfig('gasBudget',settings,defaults.gasBudget));
- for(const input of [{dailyLimit:0},{unit:'m3'},{action:'cut-gas'},{staleMinutes:0},{enabled:'yes'},{periods}])assert.throws(()=>validateConfig('gasBudget',input,settings),e=>e.status===400);
+ for(const input of [{dailyLimit:0},{unit:'m3'},{action:'cut-gas'},{staleMinutes:0},{enabled:'yes'},{periods},...[6.9,25.1,NaN,null,'10'].map(emergencyTempC=>({emergencyTempC}))])assert.throws(()=>validateConfig('gasBudget',input,settings),e=>e.status===400);
+ for(const emergencyTempC of [7,10.5,25])assert.equal(validateConfig('gasBudget',{emergencyTempC},settings).emergencyTempC,emergencyTempC);
  const plan=scheduledPlan();assert.deepEqual(validateHeatingPlan(plan).timeline,plan.timeline);
  for(const share of [-1,101,NaN,'30',undefined]){
   const invalid=structuredClone(plan);invalid.timeline[1][1].gasShare=share;assert.throws(()=>validateHeatingPlan(invalid),e=>e.status===400);
@@ -105,11 +106,13 @@ test('budget panel and editor explain data age, delayed cutoffs and Active-only 
  const f=fixture(t);f.reading(51,4);f.budget.capture(now);const html=gasBudgetMarkup(f.budget.chart(now),true);
  assert.match(html,/Pause requested/);assert.match(html,/Gas today & heating budget/);assert.match(html,/source|Source/);assert.match(html,/overshoot/);assert.match(html,/local fallback and frost/);assert.match(html,/gas-day-chart/);
  const editor=gasBudgetEditor({...settings,periods});assert.match(editor,/value="monitor"/);assert.match(editor,/value="pause" selected/);assert.match(editor,/Shares must total 100%/);
+ assert.match(editor,/Emergency room temperature °C/);assert.match(editor,/name="budgetEmergencyTempC" value="7"/);assert.match(editor,/0.5°C above/);assert.match(editor,/manual budget pause/);
 });
 
 test('heating plan and budget save together, protect writes, reject partial saves and survive restart',async()=>{
  const directory=mkdtempSync(join(tmpdir(),'cold-gas-api-'));let app=createApplication({dataDir:directory});
  try{
+  const settings={...defaults.gasBudget,enabled:true,action:'pause',dailyLimit:50,emergencyTempC:10.5};
   await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${app.server.address().port}`,plan=scheduledPlan(),body=JSON.stringify({heatingPlan:plan,gasBudget:settings});
   let response=await fetch(base+'/api/heating/plan',{method:'POST',headers:{'Content-Type':'application/json'},body});assert.equal(response.status,403);
   const headers={'Content-Type':'application/json','X-MODS-Request':'1'};
@@ -147,4 +150,13 @@ test('older installations and backups gain disabled budget defaults without losi
  delete config.gasBudget;for(const key of ['flowOffset','curveExponent','taperBand'])delete config.heatingPlan.weather[key];
  const backup=validateBackupData({appVersion:'0.15.0',exportedAt:new Date(now).toISOString(),config,rooms:f.store.list('rooms'),rules:f.store.list('rules'),secrets:{haToken:'',boilerKey:''}});
  assert.deepEqual(backup.config.gasBudget,defaults.gasBudget);assert.equal(backup.config.heatingPlan.weather.flowOffset,0);assert.equal(backup.config.heatingPlan.weather.curveExponent,1);assert.equal(backup.config.heatingPlan.weather.taperBand,0);
+});
+
+test('existing budgets and older backups retain settings and gain the 7°C emergency default',t=>{
+ const f=fixture(t),{emergencyTempC,...legacy}=settings;f.store.save('gasBudget',legacy);
+ assert.deepEqual(f.store.config().gasBudget,settings);
+ const config=f.store.config();config.gasBudget=legacy;
+ const restored=validateBackupData({appVersion:'0.19.1',exportedAt:new Date(now).toISOString(),config,rooms:f.store.list('rooms'),rules:f.store.list('rules'),secrets:{haToken:'',boilerKey:''}});
+ assert.deepEqual(restored.config.gasBudget,settings);
+ assert.equal(validateConfig('gasBudget',{},legacy).emergencyTempC,7);
 });

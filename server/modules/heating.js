@@ -99,10 +99,37 @@ export function heatingSummary({store,ha,gasBudget},now=Date.now(),config=store.
   const live = ha.status.connected && now-Date.parse(ha.status.fetchedAt)<=45000;
   const data=evaluateHeating({rooms,rules:store.list('rules'),states:live?ha.states:[],config,now,presenceMemory:ha.presenceMemory ||= new Map(),occupancyMemory:ha.occupancyMemory ||= {},temperatureUnit:ha.temperatureUnit,demandMemory:ha.demandMemory ||= new Map()});
   const budget=gasBudget?.status(now);data.budget=budget || null;
-  if(budget?.paused&&data.smartPlan?.kind==='frost')data.budget={...budget,frostOverride:true};
-  if(budget?.paused&&data.smartPlan&&data.smartPlan.kind!=='frost'){
-    data.smartPlan={...data.smartPlan,heat:false,flowC:0,kind:'budget',reason:budget.reason};
-    data.rooms=data.rooms.map(room=>({...room,budgetPaused:true}));
+  const emergencyMemory=ha.budgetEmergencyMemory ||= new Map();
+  if(budget?.settings.enabled&&data.smartPlan){
+    const threshold=budget.settings.emergencyTempC ?? 7,target=threshold+0.5;
+    const retained=new Map();
+    data.rooms=data.rooms.map(room=>{
+      const key=JSON.stringify([threshold,room.sensorEntities,room.sensorFreshnessMinutes]);
+      const emergency=room.fresh&&(room.current<threshold||emergencyMemory.get(room.id)===key&&room.current<target);
+      if(!emergency)return budget.paused?{...room,budgetPaused:true}:room;
+      retained.set(room.id,key);
+      if(!budget.paused&&room.callingForHeat&&room.heatingTarget>=target)return room;
+      // Emergency demand warms cold rooms to the recovery temperature.
+      // Solar estimates and comfort coasting must not suppress this demand.
+      return {...room,emergencyHeating:true,budgetPaused:false,scheduledTarget:room.target,target,heatingTarget:target,
+        deficit:target-room.current,controlDeficit:target-room.current,callingForHeat:true,coasting:false,
+        heatControl:{...room.heatControl,startBelow:0.5,stopBelow:0},
+        sunCompensation:{...room.sunCompensation,status:'frost',reductionC:0,heatingTargetC:target},
+        radiator:room.radiator?{...room.radiator,target}:null,
+        reason:`${room.name} is ${room.current.toFixed(1)}°C; emergency heating to ${target}°C${budget.paused?' overrides the gas budget pause.':'.'}`};
+    });
+    emergencyMemory.clear();for(const [id,key] of retained)emergencyMemory.set(id,key);
+    const emergencyRooms=data.rooms.filter(room=>room.emergencyHeating);
+    data.demandingRoomCount=data.rooms.filter(room=>room.fresh&&room.callingForHeat&&!room.budgetPaused).length;
+    if(emergencyRooms.length){
+      data.smartPlan={...smartThermostatPlan(data.rooms,config.heatingPlan,ha.states,now),planningOnly:data.smartPlan.planningOnly};
+      if(budget.paused)data.budget={...budget,frostOverride:true,emergencyOverride:true,emergencyRoomIds:emergencyRooms.map(room=>room.id),pauseReason:budget.reason,reason:data.smartPlan.reason};
+    }else if(budget.paused){
+      data.smartPlan={...data.smartPlan,heat:false,flowC:0,kind:'budget',leadRoomId:null,reason:budget.reason};
+    }
+    data.controlRoomId=data.smartPlan.leadRoomId;
+  }else{
+    emergencyMemory.clear();
   }
   return data;
 }

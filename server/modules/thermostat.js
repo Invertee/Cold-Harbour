@@ -7,7 +7,7 @@ export function valvePlan(room){
  const opening=requestedOpening(room),target=heatingTarget(room);
  return {roomId:room.id,entityId:room.radiatorEntity,opening,closing:100,...roomThresholds(room),response:roomControl(room),
   roomTarget:room.target,deviceTarget:opening?Math.min(target+5,Math.max(target+3,(room.radiator?.currentTemperature ?? room.current)+1)):target,
-  reason:!room.fresh?'Room reading unavailable':room.budgetPaused?'Paused by gas budget':opening?`${room.priority==='high'?'Comfort':'Setback'} demand`:room.coasting?room.sunCompensation?.reductionC>0?'Allowing for sunshine':'Coasting to target':'Room target satisfied'};
+  reason:!room.fresh?'Room reading unavailable':room.budgetPaused?'Paused by gas budget':room.emergencyHeating?'Emergency room heating':opening?`${room.priority==='high'?'Comfort':'Setback'} demand`:room.coasting?room.sunCompensation?.reductionC>0?'Allowing for sunshine':'Coasting to target':'Room target satisfied'};
 }
 
 export function createThermostat(context,summary){

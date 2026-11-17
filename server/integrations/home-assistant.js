@@ -23,7 +23,7 @@ export function createHomeAssistant(store, request = fetchJson, registryRequest=
     get generation(){return generation;},
     get forecasts(){return forecasts.status();},
     async pollForecasts(now=Date.now()){await forecasts.poll(now);},
-    invalidate() { generation++;polling=null; forecasts.clear();states = []; fetchedAt = null; error = null;registry=[];registryAt=registryAttempt=0;registryError=null;temperatureUnit=null;unitsAt=0;this.presenceMemory?.clear();this.demandMemory?.clear();this.occupancyMemory={}; },
+    invalidate() { generation++;polling=null; forecasts.clear();states = []; fetchedAt = null; error = null;registry=[];registryAt=registryAttempt=0;registryError=null;temperatureUnit=null;unitsAt=0;this.presenceMemory?.clear();this.demandMemory?.clear();this.budgetEmergencyMemory?.clear();this.occupancyMemory={}; },
     async poll() {
       if(polling)return polling;
       const pending=this.fetchStates();polling=pending;

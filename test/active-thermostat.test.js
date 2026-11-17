@@ -201,3 +201,32 @@ test('gas budget pauses coordinated heat and valve requests, preserves Planning 
  f.store.save('gasBudget',{...f.store.config().gasBudget,enabled:false});f.states.find(s=>s.entity_id==='sensor.office').state='18';await f.app.context.ha.poll();
  data=heatingSummary(f.app.context,f.now);assert.equal(data.smartPlan.heat,true);assert.equal(data.budget.paused,false);
 });
+
+test('custom emergency temperature opens a cold TRV and grants heat through a budget pause only in ready Active mode',async t=>{
+ const f=fixture(t),stamp=new Date(f.now).toISOString(),plan=f.store.config().heatingPlan;
+ plan.awayTarget=7;f.store.save('heatingPlan',plan);
+ f.store.save('energy',{...f.store.config().energy,gasToday:'sensor.gas_today'});
+ f.store.save('gasBudget',{...f.store.config().gasBudget,enabled:true,action:'pause',dailyLimit:10,emergencyTempC:10});
+ f.states.push({entity_id:'sensor.gas_today',state:'11',attributes:{unit_of_measurement:'kWh'},last_updated:stamp,last_reported:stamp});
+ f.states[1].state='9.9';f.states[2].attributes.current_temperature=9.9;
+ await f.app.context.ha.poll();f.exchange();
+ let data=heatingSummary(f.app.context,f.now);
+ assert.equal(data.budget.emergencyOverride,true);assert.equal(data.rooms[1].scheduledTarget,7);assert.equal(data.rooms[1].target,10.5);
+ assert.equal(f.app.context.thermostat.response(data,{connected:true,selectedMode:'Cold Harbour',telemetry:f.telemetry},f.now).authority,'pid');
+ await f.app.context.thermostat.sync();assert.equal(f.writes.length,0,'Planning never sends emergency commands.');
+ await f.app.context.thermostat.setMode('active');await f.app.context.thermostat.sync();
+ assert.ok(f.writes.some(w=>w.url.endsWith('/number/set_value')&&w.body.entity_id==='number.open'&&w.body.value>0));
+ assert.ok(f.writes.some(w=>w.url.endsWith('/climate/set_temperature')&&w.body.temperature===13.5));
+ await f.app.context.ha.poll();const reply=f.exchange({},f.now+30000);
+ assert.equal(reply.authority,'remote');assert.equal(reply.enabled,true);assert.ok(reply.flow_c>=35&&reply.flow_c<=40);assert.match(reply.reason,/emergency heating/);
+ data=heatingSummary(f.app.context,f.now);
+ for(const boiler of [{connected:true,selectedMode:'PID',telemetry:f.telemetry},{connected:true,selectedMode:'Cold Harbour',telemetry:{...f.telemetry,boiler_fault:true}},{connected:true,selectedMode:'Cold Harbour',telemetry:{...f.telemetry,comfort_enabled:false}}]){
+  assert.equal(f.app.context.thermostat.response(data,boiler,f.now).authority,'pid');
+ }
+ await new Promise(resolve=>f.app.server.listen(0,'127.0.0.1',resolve));
+ const response=await fetch(`http://127.0.0.1:${f.app.server.address().port}/api/energy/gas-budget`),budget=await response.json();
+ assert.equal(response.status,200);assert.equal(budget.emergencyOverride,true);assert.deepEqual(budget.emergencyRoomIds,['kitchen']);assert.equal(budget.settings.emergencyTempC,10);
+ f.states[1].state='10.5';f.states[2].attributes.current_temperature=10.5;await f.app.context.ha.poll();
+ data=heatingSummary(f.app.context,f.now);assert.equal(data.smartPlan.heat,false);assert.equal(valvePlan(data.rooms[1]).opening,0);
+ assert.equal(f.exchange({},f.now+60000).enabled,false,'Recovery stops the boiler even while a valve change is awaiting confirmation.');
+});
