@@ -112,14 +112,18 @@ test('legacy rooms default to no sun impact and slider values are validated',()=
 
 test('room editor offers one labelled slider and updates its accessible description',()=>{
  const html=roomSunFields({...room,sunExposure:65});assert.match(html,/type="range"/);assert.match(html,/value="65"/);assert.doesNotMatch(html,/type="number"|cloud_coverage|entityId/);
- const attributes={},output={},slider={value:'0',setAttribute:(key,value)=>attributes[key]=value,addEventListener:(name,fn)=>slider.update=fn};
- bindRoomSun({elements:{sunExposure:slider},querySelector:()=>output});assert.equal(output.textContent,'None');
- slider.value='65';slider.update();assert.equal(output.textContent,'High');assert.equal(attributes['aria-valuetext'],'High');
+ const attributes={},output={},preview={},slider={value:'0',setAttribute:(key,value)=>attributes[key]=value};
+ const form={elements:{sunExposure:slider,targetOffset:{value:'0'},awayOffset:{value:'0'}},querySelector:selector=>selector==='[data-sun-label]'?output:preview,addEventListener:(name,fn)=>form.update=fn};
+ const sunnyRoom=evaluate({cloud:25}).rooms[0];
+ bindRoomSun(form,sunnyRoom,config().heatingPlan);
+ assert.equal(output.textContent,'0%');assert.match(preview.textContent,/Clear 0.00°C/);
+ slider.value='65';form.update();assert.equal(output.textContent,'65%');assert.equal(attributes['aria-valuetext'],'65%, −1.30°C in clear sun');
+ assert.match(preview.textContent,/50% cloud −0.65°C/);assert.match(preview.textContent,/Now −0.98°C/);
 });
 
 test('room cards explain solar coasting while retaining the scheduled target and nominal response preview',()=>{
  const data=evaluate(),r=data.rooms[0],html=roomCard(r,data.smartPlan);
- assert.match(html,/Allowing for sunshine/);assert.match(html,/Sunshine · heating eased/);assert.match(html,/Target 20.0/);assert.doesNotMatch(html,/Target satisfied/);
+ assert.match(html,/Coasting/);assert.match(html,/Sun −2.00°C/);assert.match(html,/Target 20.0/);
  assert.match(data.smartPlan.reason,/sunshine/);
  const preview=roomResponsePreview(r);assert.match(preview,/19.80°C/);assert.match(preview,/20.00°C/);
 });

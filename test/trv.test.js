@@ -44,11 +44,13 @@ test('TRV temperature uses current_temperature rather than setpoint and validate
  assert.equal(temperature({...state,attributes:{current_temperature:24}},now,1800000,true),null);
  assert.equal(temperature({...state,attributes:{current_temperature:24}},now,1800000,true,'°C'),24);
 });
-test('sensor picker and room cards distinguish measured temperature, actual target and planned target',()=>{
+test('sensor picker uses measured temperature and the room card separates requested and reported valve settings',()=>{
  const options=temperatureSourceOptions([climate(),{entity_id:'climate.no_measurement',attributes:{temperature:21}},{entity_id:'sensor.power',attributes:{unit_of_measurement:'W'}}]);
  assert.equal(options.length,1);assert.match(options[0][1],/measured temperature/);
- const html=radiatorCard({id:'kitchen',name:'Kitchen',target:20.5,radiator:{name:'Kitchen valve',currentTemperature:24,currentTarget:19,mode:'heat',available:true,usedInAverage:true},radiatorControl:{mode:'monitor',canControl:false,reason:'Monitor only'}});
- assert.match(html,/device target 19.0/);assert.match(html,/planned 20.5/);assert.doesNotMatch(html,/Focus this room|Pause radiator|<select/);assert.match(html,/TRV temperature included/);
+ const room={id:'kitchen',name:'Kitchen',radiator:{mode:'heat',action:'idle',available:true},valvePlan:{opening:50,reportedOpening:0,canOverride:true}};
+ assert.match(radiatorCard(room),/TRV · Idle/);assert.match(radiatorCard(room),/Requested 50% · Reported setting 0%/);assert.match(radiatorCard(room),/Adjust Kitchen valve/);
+ const planning=radiatorCard({...room,radiator:{...room.radiator,preview:true},valvePlan:{...room.valvePlan,canOverride:false,blocked:'Select Active to control the valve'}});
+ assert.match(planning,/Planned 50%/);assert.match(planning,/Select Active/);assert.doesNotMatch(planning,/data-valve-adjust/);
  assert.match(measurementDetails({sensorCount:1,sensorCountUsed:1,measurements:[{name:'Kitchen',value:24,kind:'thermostat'}]}),/24.0°C/);
 });
 test('radiators stay in Monitor and never issue heating services without explicit opt-in',async t=>{

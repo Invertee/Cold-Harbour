@@ -53,7 +53,7 @@ test('valve response supports caps and fixed travel, exposes thresholds, and alw
  assert.equal(valvePlan({...r,deficit:4}).opening,60);
  p=valvePlan({...r,heatControl:{...r.heatControl,openingMode:'fixed',fixedOpening:35}});assert.equal(p.opening,35);
  for(const override of [{fresh:false},{callingForHeat:false},{budgetPaused:true}])assert.equal(valvePlan({...r,...override}).opening,0);
- const html=roomResponsePreview(r);assert.match(html,/19.60°C/);assert.match(html,/19.80°C/);assert.match(html,/30%/);assert.match(html,/already open/);
+ const preview=roomResponsePreview(r);assert.match(preview,/Opens at 15% below 19.60°C/);assert.match(preview,/Closes at 19.80°C/);
 });
 
 test('room and weather tuning reject inconsistent thresholds and invalid valve travel',()=>{

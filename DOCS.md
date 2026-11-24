@@ -40,3 +40,11 @@ Open **Energy → Heating plan & budget → Daily gas budget** and set **Emergen
 In Smart Thermostat **Active** mode, a room below this temperature requests heat even when the daily gas limit, a schedule allocation or a manual budget pause would normally stop heating. Only rooms needing emergency heat request their radiators to open; other rooms remain paused. A room warms to 0.5°C above the emergency temperature before its budget pause resumes. For example, a 10°C setting starts heating below 10°C and stops emergency heating at 10.5°C. Emergency gas use still counts towards the budget.
 
 While the budget is enabled, the emergency temperature also acts as a minimum when the budget is still available and a scheduled target is lower. Normal heating above this minimum continues as usual. Emergency heating uses fresh mapped room temperatures and overrides sunshine reductions and early coasting when needed to reach the recovery temperature. The Heating and Energy pages explain when it overrides the budget. Planning mode only previews the request. Normal boiler readiness, ESP mode, heating permission, fault checks and radiator confirmation still apply; the device's local frost protection and fallback controls remain separate.
+
+# Room radiator valves
+
+Map the ZHA thermostat in **Edit room → Devices & sensors**. Enable **Valve opening degree**, **Valve closing degree** and **Adaptive mode** on the same ZHA device. Select **Active** in Cold Harbour and **Cold Harbour** mode on the ESP.
+
+The room card shows the requested opening and the setting reported by Home Assistant. The percentages describe the valve setting. Use the reported heating or idle state alongside them. A fixed opening applies only after the room calls for heat. For example, a target of 18°C with a 1.5°C reopen shortfall waits until the room falls below 16.5°C before opening.
+
+Use **Adjust** on the room card to set an opening for 15 minutes to two hours. A positive opening requests room heat, and 0% closes the valve and removes the room's heat request. Select **Resume automatic** to return to the schedule early. A gas-budget pause, frost protection, missing room readings, or the 28°C room limit can suspend the override.

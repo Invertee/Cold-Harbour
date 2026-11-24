@@ -1,6 +1,5 @@
 import {esc,fixed,icon,pill} from './ui.js';
-import {radiatorCard,measurementDetails,trvState} from './radiators.js';
-import {roomSunStatus} from './room-sun.js';
+import {radiatorCard,measurementDetails} from './radiators.js';
 
 export function temperatureTrend(room){
  const trend=room.trend,direction=room.fresh&&['rising','falling','stable'].includes(trend?.direction)?trend.direction:'unavailable';
@@ -16,7 +15,24 @@ export function targetDistance(room){
  return `<div class="target-distance distance-${state}" role="img" aria-label="${esc(room.name)}: ${esc(label)}${Math.abs(difference)>3?'; scale capped at 3°C':''}"><div class="distance-caption"><span>${esc(label)}</span><small>Target ${fixed(room.target)}°</small></div><div class="distance-track" aria-hidden="true"><b style="left:${Math.min(50,position)}%;width:${Math.abs(position-50)}%"></b><i class="distance-target"></i><i class="distance-reading" style="left:${position}%"></i></div><div class="distance-scale" aria-hidden="true"><span>−3°C</span><span>Target</span><span>+3°C</span></div></div>`;
 }
 
-export function roomCard(room,smart,insight){
+export function roomCard(room,smart,insight,timezone){
  const state=!room.fresh?'unavailable':room.callingForHeat?'calling':'satisfied';
- return `<article class="card room-card climate-room room-${state}"><div class="room-card-top"><span class="room-symbol">${icon(room.icon || 'home')}</span><h3>${esc(room.name)}</h3><button class="icon-button edit-room" data-id="${esc(room.id)}" aria-label="Edit ${esc(room.name)}">${icon('edit')}</button></div><div class="room-priority">${pill(room.priority==='high'?'High priority':'Low priority',room.priority==='high'?'green':'neutral')}${room.id===smart.leadRoomId?'<span class="room-lead">Leading request</span>':''}</div><div class="room-temperature">${fixed(room.current)}<span>°C</span>${temperatureTrend(room)}</div>${targetDistance(room)}<div class="room-demand">${pill(!room.fresh?'Temperature unavailable':room.budgetPaused?'Paused by gas budget':room.coasting?room.sunCompensation?.reductionC>0?'Allowing for sunshine':'Coasting to target':room.callingForHeat?'Needs heat':'Target satisfied',!room.fresh||room.callingForHeat?'amber':'green')}${trvState(room)}</div>${roomSunStatus(room)}<details class="room-detail"><summary>Readings & radiator</summary>${room.reason?`<p class="field-help">${esc(room.reason)}</p>`:''}${measurementDetails(room)}${room.presence?.active?.length?`<p class="field-help">Presence: ${esc(room.presence.active.join(', '))}</p>`:''}<div class="room-valve">${radiatorCard(room)}</div><div class="room-warmup"><span>Observed warm-up</span><strong>${insight?.minutesPerC?`${fixed(insight.minutesPerC,0)} min / °C`:'Collecting observations'}</strong>${insight?.sessions?`<small>${insight.sessions} heating periods</small>`:''}</div></details></article>`;
+ const override=room.radiatorOverride&&!room.radiatorOverride.paused;
+ const demand=room.budgetPaused?'Gas budget paused':room.emergencyHeating?'Frost protection':
+  override?(room.callingForHeat?'Override heating':'Override closed'):room.coasting?'Coasting':room.callingForHeat?'Needs heat':'No heat requested';
+ const sun=room.sunCompensation?.reductionC;
+ return `<article class="card room-card climate-room room-${state}">
+  <div class="room-card-top"><span class="room-symbol">${icon(room.icon || 'home')}</span><h3>${esc(room.name)}</h3><button class="icon-button edit-room" data-id="${esc(room.id)}" aria-label="Edit ${esc(room.name)}">${icon('edit')}</button></div>
+  <div class="room-priority">${pill(room.priority==='high'?'High priority':'Low priority',room.priority==='high'?'green':'neutral')}${room.id===smart.leadRoomId?'<span class="room-lead">Leading request</span>':''}</div>
+  <div class="room-temperature">${fixed(room.current)}<span>°C</span>${temperatureTrend(room)}</div>
+  ${targetDistance(room)}
+  ${room.fresh?`<div class="room-demand">${pill(demand,room.callingForHeat?'amber':'green')}${sun>0?`<small>Sun −${fixed(sun,2)}°C</small>`:''}</div>`:''}
+  ${radiatorCard(room,timezone)}
+  <details class="room-detail"><summary>Room readings</summary>
+   ${room.sensorCount?measurementDetails(room):'<p class="field-help">Choose temperature sensors in Edit room.</p>'}
+   ${room.radiator&&room.radiatorControl?.mode&&room.radiatorControl.mode!=='monitor'?`<button class="text-link" data-radiator-monitor="${esc(room.id)}">Clear legacy radiator mode</button>`:''}
+   ${room.presence?.active?.length?`<p class="field-help">Presence · ${esc(room.presence.active.join(', '))}</p>`:''}
+   ${insight?.minutesPerC?`<div class="room-warmup"><span>Observed warm-up</span><strong>${fixed(insight.minutesPerC,0)} min / °C</strong></div>`:''}
+  </details>
+ </article>`;
 }

@@ -7,6 +7,7 @@ const clamp=(n,low,high)=>Math.max(low,Math.min(high,n));
 export const roomControl=room=>({...defaultRoomControl,...room.heatControl});
 export const heatingTarget=room=>room.heatingTarget ?? room.target;
 export const heatingDeficit=room=>room.controlDeficit ?? room.deficit;
+export const sunTargetReduction=(target,impact,brightness)=>Math.min(Math.max(0,target-7),2*impact/100*brightness);
 export function roomThresholds(room){
  const control=roomControl(room),target=heatingTarget(room);
  return {opensBelowC:target-control.startBelow,closesAtC:target-control.stopBelow,fullOpenAtC:target-control.fullOpenBelow};
@@ -14,8 +15,9 @@ export function roomThresholds(room){
 export function requestedOpening(room){
  if(!room.fresh||!room.callingForHeat||room.budgetPaused)return 0;
  const control=roomControl(room);
+ if(control.openingMode==='fixed')return clamp(control.fixedOpening,control.minOpening,control.maxOpening);
  const proportional=Math.ceil(clamp((heatingDeficit(room)-control.stopBelow)/(control.fullOpenBelow-control.stopBelow),0,1)*control.maxOpening/5)*5;
- return clamp(control.openingMode==='fixed'?control.fixedOpening:proportional,control.minOpening,control.maxOpening);
+ return clamp(proportional,control.minOpening,control.maxOpening);
 }
 export function curveFlow(target,outdoor,settings){
  const w={...defaultWeatherPlan,...settings},load=clamp((target-outdoor)/(target-w.designOutdoor),0,1);

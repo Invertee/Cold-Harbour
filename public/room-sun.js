@@ -1,21 +1,32 @@
-import {esc} from './ui.js';
-
-export const sunImpactLabel=value=>value<=0?'None':value<=25?'Low':value<=50?'Moderate':value<=75?'High':'Very high';
+import {esc,fixed} from './ui.js';
+import {sunTargetReduction} from './heating-model.js';
+import {roomTargetPreview} from './room-targets.js';
 
 export function roomSunFields(room){
- const value=room.sunExposure ?? 0,label=sunImpactLabel(value);
- return `<section class="room-sun"><div class="room-sun-heading"><label for="room-sun-impact">Sun impact</label><output for="room-sun-impact" data-sun-label>${label}</output></div><input id="room-sun-impact" name="sunExposure" type="range" min="0" max="100" step="5" value="${esc(value)}" aria-valuetext="${label}" aria-describedby="room-sun-help"><div class="room-sun-scale" aria-hidden="true"><span>None</span><span>Very high</span></div><p id="room-sun-help" class="field-help">How much does sunshine warm this room? Move right for sunny rooms like the kitchen. Heating eases automatically as skies clear during daylight, using your existing weather data.</p></section>`;
+ const value=room.sunExposure ?? 0;
+ return `<section class="room-sun">
+  <div class="room-sun-heading"><label for="room-sun-impact">Sun impact</label><output for="room-sun-impact" data-sun-label>${value}%</output></div>
+  <input id="room-sun-impact" name="sunExposure" type="range" min="0" max="100" step="5" value="${esc(value)}" aria-describedby="room-sun-help">
+  <p id="room-sun-help" class="field-help" data-sun-preview></p>
+ </section>`;
 }
 
-export function bindRoomSun(form){
- const slider=form.elements.sunExposure,output=form.querySelector('[data-sun-label]');
- const update=()=>{const label=sunImpactLabel(Number(slider.value));output.textContent=label;slider.setAttribute('aria-valuetext',label);};
- slider.addEventListener('input',update);update();
-}
-
-export function roomSunStatus(room){
- const sun=room.sunCompensation;
- if(!sun||sun.status==='disabled')return '';
- const text=sun.reductionC>0?'Sunshine · heating eased':sun.status==='night'?'Sun impact · night':sun.status==='frost'?'Sun impact · frost protection':sun.status==='current'?'Sun impact · overcast':sun.status==='room_unavailable'?'Sun impact · awaiting room reading':sun.status==='daylight_unavailable'?'Sun impact · awaiting daylight data':'Sun impact · awaiting weather';
- return `<p class="room-sun-status">${text}</p>`;
+export function bindRoomSun(form,room,settings){
+ const slider=form.elements.sunExposure,output=form.querySelector('[data-sun-label]'),preview=form.querySelector('[data-sun-preview]');
+ const update=()=>{
+  const value=Number(slider.value);
+  const targets=roomTargetPreview(settings,Number(form.elements.targetOffset.value),Number(form.elements.awayOffset.value));
+  const target=room.priority==='low'?targets.low:targets.high;
+  const correction=brightness=>{
+   const amount=sunTargetReduction(target,value,brightness);
+   return `${amount>0?'−':''}${fixed(amount,2)}°C`;
+  };
+  const sun=room.sunCompensation,brightness=room.fresh&&!room.emergencyHeating&&room.current>=7?sun?.brightness:null;
+  output.textContent=`${value}%`;
+  slider.setAttribute('aria-valuetext',`${value}%, ${correction(1)} in clear sun`);
+  preview.textContent=`Heating target · Clear ${correction(1)} · 50% cloud ${correction(.5)}${Number.isFinite(brightness)?` · Now ${correction(brightness)}`:''}`;
+ };
+ form.addEventListener('input',update);
+ form.addEventListener('change',update);
+ update();
 }

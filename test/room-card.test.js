@@ -15,5 +15,5 @@ test('missing readings never appear on target and room names are escaped',()=>{
  const room={id:'office',name:'<Office>',current:null,target:20,fresh:false};
  assert.match(targetDistance(room),/No recent reading/);assert.doesNotMatch(targetDistance(room),/distance-reading/);
  const html=roomCard(room,{leadRoomId:null});assert.match(html,/&lt;Office&gt;/);assert.doesNotMatch(html,/<Office>/);
- assert.match(html,/Temperature unavailable/);
+ assert.match(html,/No recent reading/);
 });

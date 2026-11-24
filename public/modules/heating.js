@@ -12,16 +12,49 @@ export const heating={...heatingView,
     const selectedSensors=Array.isArray(room.sensorEntities)?room.sensorEntities:(room.sensorEntity?[room.sensorEntity]:[]);
     const sensorOptions=temperatureSourceOptions(entities);
     for(const id of selectedSensors)if(!sensorOptions.some(([entityId])=>entityId===id))sensorOptions.push([id,id]);
-    const sensorChoices=sensorOptions.length?sensorOptions.map(([id,label])=>`<label class="sensor-choice"><input type="checkbox" name="sensorEntities" value="${esc(id)}" ${selectedSensors.includes(id)?'checked':''}><span>${esc(label)}</span></label>`).join(''):'<p class="muted">No temperature sensors found. Connect Home Assistant to load entities.</p>';
+    const sensorChoices=sensorOptions.length?sensorOptions.map(([id,label])=>`<label class="sensor-choice"><input type="checkbox" name="sensorEntities" value="${esc(id)}" ${selectedSensors.includes(id)?'checked':''}><span>${esc(label)}</span></label>`).join(''):'<p class="muted">Connect Home Assistant to find sensors.</p>';
     const occupied=preserveOption([['','No occupancy sensor'],...entityOptions(entities,'binary_sensor').slice(1)],room.occupancyEntity);
     const radiatorOptions=preserveOption([['','Mechanical TRV / no smart valve'],...entityOptions(entities,'climate').slice(1)],room.radiatorEntity);
-    const editor=dialog(`<h2>${room.id?'Edit room':'Add room'}</h2><form id="room-form" class="room-editor-layout"><div class="room-editor-main">${input('Room name','name',room.name,'required maxlength="60"')}<fieldset class="sensor-picker"><legend>Temperature sensors</legend><input type="search" id="room-sensor-search" placeholder="Find a temperature sensor…" aria-label="Find a temperature sensor"><div class="sensor-list">${sensorChoices}</div><p class="field-help">Selected readings are averaged. Select each physical probe once.</p>${input('Temperature freshness for this room (minutes)','sensorFreshnessMinutes',room.sensorFreshnessMinutes ?? '',`type="number" min="5" max="1440" placeholder="Default: ${ctx.config.heating.staleMinutes} minutes"`)}<p class="field-help">Leave blank for the default. Allow longer gaps for slow-reporting sensors.</p></fieldset></div><div class="room-editor-options">${roomTemperaturePreferences(room,ctx.config.heatingPlan)}<input type="hidden" name="eco" value="${esc(room.eco)}">${select('Radiator valve (optional)','radiatorEntity',radiatorOptions,room.radiatorEntity || '')}<p class="field-help">Use its ZHA thermostat entity. Include its measured temperature above if needed.</p><details class="room-presence" ${room.occupancyEntity||room.presenceRules?.length?'open':''}><summary>Presence observations (optional)</summary>${select('Occupancy sensor (optional)','occupancyEntity',occupied,room.occupancyEntity || '')}<div id="presence-clues"></div><button type="button" class="button secondary" id="add-presence">${icon('plus')} Add device clue</button><p class="field-help">Any matching clue records room use.</p><input type="hidden" name="presenceMode" value="${esc(room.presenceMode || 'priority')}">${input('Keep presence for (minutes)','presenceHoldMinutes',room.presenceHoldMinutes ?? 20,'type="number" min="0" max="180" required')}<p class="field-help">Presence observations do not change scheduled priority.</p></details></div><input type="hidden" name="weight" value="${esc(room.weight)}"><div class="form-actions">${room.id?'<button type="button" class="button danger" id="delete-room">Delete room</button>':''}<button class="button" type="submit">Save room</button></div><p class="form-error" role="alert"></p></form>`);
+    const settings={...ctx.config.heatingPlan,houseTarget:this.data?.plan?.activeTarget ?? ctx.config.heatingPlan.houseTarget};
+    const editor=dialog(`<h2>${room.id?'Edit room':'Add room'}</h2><form id="room-form">
+      ${input('Room name','name',room.name,'required maxlength="60"')}
+      ${roomTemperaturePreferences(room)}
+      ${roomSunFields(room)}
+      ${roomControlFields(room)}
+      <details class="room-sources" ${room.id?'':'open'}>
+        <summary>Devices & sensors <small data-room-sensor-count>${selectedSensors.length} selected</small></summary>
+        <fieldset class="sensor-picker">
+          <legend>Temperature sensors</legend>
+          <input type="search" id="room-sensor-search" placeholder="Find a temperature sensor…" aria-label="Find a temperature sensor">
+          <div class="sensor-list">${sensorChoices}</div>
+          <p class="field-help">Readings are averaged. Select each probe once.</p>
+          ${input('Temperature freshness limit (minutes)','sensorFreshnessMinutes',room.sensorFreshnessMinutes ?? '',`type="number" min="5" max="1440" placeholder="Default: ${ctx.config.heating.staleMinutes}"`)}
+        </fieldset>
+        ${select('Radiator valve (ZHA thermostat)','radiatorEntity',radiatorOptions,room.radiatorEntity || '')}
+        <details class="room-presence">
+          <summary>Presence sensors</summary>
+          ${select('Occupancy sensor','occupancyEntity',occupied,room.occupancyEntity || '')}
+          <div id="presence-clues"></div>
+          <button type="button" class="button secondary" id="add-presence">${icon('plus')} Add device clue</button>
+          ${input('Keep presence for (minutes)','presenceHoldMinutes',room.presenceHoldMinutes ?? 20,'type="number" min="0" max="180" required')}
+        </details>
+      </details>
+      <input type="hidden" name="presenceMode" value="${esc(room.presenceMode || 'priority')}">
+      <input type="hidden" name="eco" value="${esc(room.eco)}">
+      <input type="hidden" name="weight" value="${esc(room.weight)}">
+      <div class="form-actions">${room.id?'<button type="button" class="button danger" id="delete-room">Delete room</button>':''}<button class="button" type="submit">Save room</button></div>
+      <p class="form-error" role="alert"></p>
+    </form>`);
     const form=document.querySelector('#room-form');
-    form.querySelector('.room-presence').insertAdjacentHTML('beforebegin',roomControlFields(room));
-    form.querySelector('.room-response').insertAdjacentHTML('beforebegin',roomSunFields(room));
-    bindRoomSun(form);
-    bindRoomTemperaturePreferences(form,ctx.config.heatingPlan);
-    bindRoomControl(form,room,{...ctx.config.heatingPlan,houseTarget:this.data?.plan?.activeTarget ?? ctx.config.heatingPlan.houseTarget});
+    bindRoomTemperaturePreferences(form,settings);
+    bindRoomSun(form,room,settings);
+    bindRoomControl(form,room,settings);
+    form.addEventListener('invalid',event=>{
+      for(let section=event.target.closest('details');section;section=section.parentElement.closest('details'))section.open=true;
+    },true);
+    form.querySelector('.sensor-list').addEventListener('change',()=>{
+      form.querySelector('[data-room-sensor-count]').textContent=`${form.querySelectorAll('[name="sensorEntities"]:checked').length} selected`;
+    });
     const clueContainer=form.querySelector('#presence-clues');
     const addClue=(clue={entityId:'',condition:'is',value:'on'})=>{
       const options=preserveOption([['','Choose a device or sensor…'],...entities.filter(entity=>presenceDomains.includes(entity.entity_id.split('.')[0])).map(entity=>[entity.entity_id,`${entity.attributes?.friendly_name || entity.entity_id} · ${entity.entity_id}`])],clue.entityId);

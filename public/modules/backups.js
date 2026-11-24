@@ -5,12 +5,10 @@ export const backups={
   id:'backups',label:'Backups',
   async render(){
     return `<div class="settings-grid backup-grid"><section class="card settings-card"><div class="settings-heading"><h2>Export configuration</h2></div>
-      <p class="backup-description">Download a password-protected backup to restore this setup or move it to another Cold Harbour instance.</p>
-      <p class="field-help">Includes connection settings, saved Home Assistant token, ESP pairing key, energy mappings, rooms, presence settings and heating schedules. History, activity logs and cached entities stay on this instance. Supervisor credentials and host environment settings are supplied by the destination.</p>
-      <form id="backup-export-form">${input('Backup password','password','','type="password" minlength="10" maxlength="1024" required autocomplete="new-password"')}${input('Confirm password','confirmation','','type="password" minlength="10" maxlength="1024" required autocomplete="new-password"')}<p class="field-help">Use at least 10 characters. Keep the password somewhere safe; it is needed to open the backup.</p><button class="button" type="submit">Download backup</button><p class="form-error" role="alert"></p></form></section>
+      <p class="field-help">Includes configuration and saved credentials. History stays on this instance.</p>
+      <form id="backup-export-form">${input('Backup password','password','','type="password" minlength="10" maxlength="1024" required autocomplete="new-password"')}${input('Confirm password','confirmation','','type="password" minlength="10" maxlength="1024" required autocomplete="new-password"')}<p class="field-help">Keep the password to open the backup. Use at least 10 characters.</p><button class="button" type="submit">Download backup</button><p class="form-error" role="alert"></p></form></section>
       <section class="card settings-card"><div class="settings-heading"><h2>Import configuration</h2></div>
-      <p class="backup-description">Choose a Cold Harbour backup and review its contents before replacing this instance’s configuration.</p>
-      <p class="field-help">Import replaces settings, credentials, rooms and schedules. Existing history stays here. Smart Thermostat returns to Planning and legacy radiator overrides are cleared. The next signed ESP exchange releases the boiler to Local PID; radiator settings remain as last applied.</p>
+      <p class="field-help">Import replaces configuration and credentials, clears overrides and returns heating to Planning.</p>
       <form id="backup-import-form"><label>Backup file<input type="file" name="file" accept=".json,application/json" required></label>${input('Backup password','password','','type="password" minlength="10" maxlength="1024" required autocomplete="off"')}<button class="button secondary" type="submit">Preview backup</button><p class="form-error" role="alert"></p></form>
       <div id="backup-preview" aria-live="polite"></div></section></div>`;
   },
@@ -42,7 +40,7 @@ export const backups={
         pending={backup,password,previewId:data.previewId};
         preview.innerHTML=`<div class="backup-review"><h3>Review backup</h3><p>Cold Harbour ${esc(data.appVersion)} · exported ${esc(dateTime(data.exportedAt,ctx.config.general.timezone,{day:'numeric',month:'short',year:'numeric'}))}</p>
           <dl><dt>Rooms</dt><dd>${data.rooms}</dd><dt>Schedule periods</dt><dd>${data.periods}</dd><dt>Legacy schedules</dt><dd>${data.rules}</dd><dt>Timezone</dt><dd>${esc(data.timezone)}</dd><dt>Home Assistant</dt><dd>${esc(data.homeAssistantUrl || 'No saved address')}${data.supervisor?' · destination uses Supervisor':''}</dd><dt>Controller ID</dt><dd>${esc(data.controllerId)}</dd><dt>Saved HA token</dt><dd>${data.credentials.haToken?'Included':'None'}</dd><dt>ESP pairing key</dt><dd>${data.credentials.boilerKey?'Included':'None'}</dd><dt>Heating after import</dt><dd>Planning</dd></dl>
-          <p class="inline-note">Review the imported connections and room mappings before selecting Active. Update the ESP’s Cold Harbour Server URL when moving to a new host.</p>
+          <p class="inline-note">If moving hosts, update the Cold Harbour Server URL on the ESP.</p>
           <label class="backup-confirm"><input type="checkbox" id="confirm-backup-import">Replace this instance’s configuration with this backup.</label><div class="form-actions compact"><button class="button danger" type="button" id="apply-backup" disabled>Import configuration</button><button class="button secondary" type="button" id="cancel-backup">Cancel</button></div><p class="form-error" role="alert"></p></div>`;
         document.querySelector('#confirm-backup-import').onchange=event=>{document.querySelector('#apply-backup').disabled=!event.target.checked;};
         document.querySelector('#cancel-backup').onclick=clearPreview;

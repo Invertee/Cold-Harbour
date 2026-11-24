@@ -62,5 +62,5 @@ test('curve samples include switching boundaries, stay ordered and never draw a 
 test('simulator has three accessible sliders, room choice and a preview-only reset with escaped room names',()=>{
  const html=weatherSimulationMarkup([{id:'bad"id',name:'<Kitchen>'}]);assert.equal((html.match(/type="range"/g)||[]).length,3);
  assert.match(html,/Outside temperature/);assert.match(html,/Room temperature/);assert.match(html,/Target temperature/);assert.match(html,/type="button"[^>]*data-model-reset/);
- assert.match(html,/Preview temperatures are for exploring only/);assert.match(html,/&lt;Kitchen&gt;/);assert.match(html,/bad&quot;id/);assert.doesNotMatch(html,/<Kitchen>|<table/);
+ assert.match(html,/Preview only/);assert.match(html,/&lt;Kitchen&gt;/);assert.match(html,/bad&quot;id/);assert.doesNotMatch(html,/<Kitchen>|<table/);
 });

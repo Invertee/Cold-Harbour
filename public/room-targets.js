@@ -1,8 +1,8 @@
 import {esc,fixed,input,select} from './ui.js';
 
-export function roomTemperaturePreferences(room,settings){
- const preference=(name,title,reference,value,max)=>`<fieldset class="room-temperature-preference"><legend class="sr-only">${title}</legend><h4 class="room-preference-title" aria-hidden="true">${title}</h4>${select('This room should be',`${name}Direction`,[['same','The same temperature'],['warmer','Warmer'],['cooler','Cooler']],value>0?'warmer':value<0?'cooler':'same')}${input('By how many °C?',`${name}Amount`,Math.abs(value),`type="number" min="0" max="${max}" step="any" required ${value===0?'disabled':''}`)}<input type="hidden" name="${name}" value="${esc(value)}"><p data-room-target="${name}" role="status" aria-live="polite"></p></fieldset>`;
- return `<h3>Room temperatures</h3><p class="field-help">Set this room’s comfort and low-priority targets.</p><div class="form-grid">${preference('targetOffset','When High · comfort','house',room.targetOffset ?? (room.id?room.comfort-20:0),10)}${preference('awayOffset','When Low · reduced heating','Low',room.awayOffset ?? (room.id?room.eco-16:0),15)}</div>`;
+export function roomTemperaturePreferences(room){
+ const preference=(name,title,value,max)=>`<fieldset class="room-temperature-preference"><legend>${title}</legend>${select('Temperature preference',`${name}Direction`,[['same','Same temperature'],['warmer','Warmer'],['cooler','Cooler']],value>0?'warmer':value<0?'cooler':'same')}${input('Difference °C',`${name}Amount`,Math.abs(value),`type="number" min="0" max="${max}" step="any" required ${value===0?'disabled':''}`)}<input type="hidden" name="${name}" value="${esc(value)}"><p data-room-target="${name}" role="status" aria-live="polite"></p></fieldset>`;
+ return `<div class="form-grid">${preference('targetOffset','High priority',room.targetOffset ?? (room.id?room.comfort-20:0),10)}${preference('awayOffset','Low priority',room.awayOffset ?? (room.id?room.eco-16:0),15)}</div>`;
 }
 
 export function preferenceDifference(direction,amount){

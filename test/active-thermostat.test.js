@@ -74,6 +74,76 @@ test('Active regulates a cold smart room with a separate bounded actuator target
  assert.equal(valvePlan({fresh:true,callingForHeat:true,deficit:10,target:28,current:18,radiator:{currentTemperature:40}}).deviceTarget,33);
 });
 
+test('a fixed 50% request reaches a renamed ZHA valve as soon as the room crosses its reopen threshold',async t=>{
+ const f=fixture(t),{ha,thermostat,heatingHistory}=f.app.context;
+ const kitchen=f.store.list('rooms').find(r=>r.id==='kitchen');
+ f.store.put('rooms',{...kitchen,awayOffset:2,heatControl:{startBelow:1.5,openingMode:'fixed',fixedOpening:50}});
+ f.states[1].state='17.46';
+ f.states[2].attributes.current_temperature=17.46;
+ f.registry[3].original_name=null;
+ f.registry[3].translation_key='adaptive_mode';
+ f.registry[3].entity_id='switch.renamed_adaptive';
+ f.states[5].entity_id='switch.renamed_adaptive';
+ await ha.poll();f.exchange();await thermostat.setMode('active');
+ assert.equal(thermostat.status().valves[0].opening,0);
+ await thermostat.sync();
+ f.states[1].state='16.4';
+ f.states[2].attributes.current_temperature=16.4;
+ await ha.poll();
+ let valve=thermostat.status().valves[0];
+ assert.equal(valve.opensBelowC,16.5);assert.equal(valve.opening,50);assert.equal(valve.reportedOpening,0);
+ await thermostat.sync();
+ assert.equal(f.writes.findLast(w=>w.body.entity_id==='number.open').body.value,50);
+ assert.equal(thermostat.status().canGrant,false);
+ await ha.poll();assert.equal(thermostat.status().canGrant,true);
+ heatingHistory.capture(Date.now());
+ const sample=heatingHistory.chart(60).points.at(-1);
+ assert.equal(sample.valve_kitchen,50);assert.equal(sample.valve_reported_kitchen,50);
+});
+
+test('room valve overrides change demand, yield to protection and end on cancellation or expiry',async t=>{
+ const f=fixture(t),{ha,thermostat}=f.app.context;
+ f.states[0].state='22';
+ f.states[1].state='18';
+ f.states[2].attributes.current_temperature=18;
+ await ha.poll();f.exchange();
+ await new Promise(resolve=>f.app.server.listen(0,'127.0.0.1',resolve));
+ const api=path=>`http://127.0.0.1:${f.app.server.address().port}/api/heating${path}`;
+ const kitchen=async()=>{const data=await (await fetch(api(''))).json();return {room:data.rooms.find(r=>r.id==='kitchen'),plan:data.smartPlan};};
+ const post=body=>fetch(api('/radiator/override'),{method:'POST',headers:{'Content-Type':'application/json','X-MODS-Request':'1'},body:JSON.stringify({roomId:'kitchen',...body})});
+ assert.equal((await post({opening:60,minutes:15})).status,409);
+ await thermostat.setMode('active');
+ for(const body of [{opening:101,minutes:15},{opening:60,minutes:1},{opening:60,minutes:15,entityId:'number.other'}])assert.equal((await post(body)).status,400);
+ const result=await post({opening:60,minutes:15});assert.equal(result.status,200);
+ const {override}=await result.json();assert.equal(override.opening,60);assert.ok(override.until>Date.now());
+ let {room,plan}=await kitchen();
+ assert.equal(room.valvePlan.opening,60);assert.equal(room.valvePlan.scheduledOpening,0);assert.equal(plan.leadRoomId,'kitchen');
+ await thermostat.sync();assert.equal(f.states[3].state,'60');
+ await ha.poll();assert.equal(thermostat.status().canGrant,true);
+ assert.equal((await post({opening:null})).status,200);
+ await thermostat.sync();assert.equal(f.states[3].state,'0');
+ assert.equal((await kitchen()).plan.heat,false);
+ f.states[1].state='14';
+ await ha.poll();
+ assert.equal((await post({opening:0,minutes:30})).status,200);
+ ({room,plan}=await kitchen());
+ assert.equal(room.valvePlan.opening,0);assert.ok(room.valvePlan.scheduledOpening>0);assert.equal(plan.heat,false);
+ f.store.save('gasBudget',{...f.store.config().gasBudget,enabled:true,emergencyTempC:10});
+ f.states[1].state='9';
+ await ha.poll();
+ ({room,plan}=await kitchen());
+ assert.equal(room.radiatorOverride.paused,'Frost protection');assert.equal(plan.heat,true);assert.ok(room.valvePlan.opening>0);
+ f.states[1].state='18';
+ await ha.poll();
+ assert.equal((await post({opening:75,minutes:15})).status,200);
+ await thermostat.sync();assert.equal(f.states[3].state,'75');
+ await ha.poll();
+ const stored=f.store.list('rooms').find(r=>r.id==='kitchen');
+ f.store.put('rooms',{...stored,radiatorOverride:{...stored.radiatorOverride,until:Date.now()-1}});
+ await thermostat.sync();
+ assert.equal(f.states[3].state,'0');assert.equal((await kitchen()).room.radiatorOverride,undefined);
+});
+
 test('ESP Local PID overrides Active and never permits app radiator writes',async t=>{
  const f=fixture(t);await f.app.context.ha.poll();f.exchange({mode:'PID'});await f.app.context.thermostat.setMode('active');await f.app.context.thermostat.sync();
  assert.equal(f.writes.length,0);assert.equal(f.app.context.thermostat.status().ready,false);assert.equal(f.exchange({mode:'PID'},f.now+30000).authority,'pid');

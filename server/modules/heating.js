@@ -6,8 +6,8 @@ import {createRadiatorControl} from './radiators.js';
 import {HttpError} from '../http.js';
 import {smartThermostatPlan} from '../smart-thermostat.js';
 import {createHeatingOutlook} from './heating-outlook.js';
-import {createThermostat,valvePlan} from './thermostat.js';
-import {roomControl} from '../../public/heating-model.js';
+import {createThermostat} from './thermostat.js';
+import {roomControl,requestedOpening} from '../../public/heating-model.js';
 import {sunlightReading,roomSunCompensation} from '../sun-compensation.js';
 
 const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -49,7 +49,7 @@ export function evaluateHeating({rooms,rules,states,config,now=Date.now(),presen
   const matches = plan?[]:rules.filter(rule=>ruleActive(rule,now,general.timezone));
   const activity = plan?plan.profile.id:heating.activity === 'auto' ? [...matches].sort((a,b)=>b.priority-a.priority)[0]?.activity || 'home' : heating.activity;
   const maxAge = heating.staleMinutes*60000;
-  const evaluated = rooms.map(room=>{
+  const evaluated = rooms.map(({radiatorOverride,...room})=>{
     const sensorEntities=Array.isArray(room.sensorEntities)?room.sensorEntities:room.sensorEntity?[room.sensorEntity]:[];
     const selectedEntities=sensorEntities;
     const sensorFreshnessMinutes=room.sensorFreshnessMinutes ?? heating.staleMinutes,roomMaxAge=sensorFreshnessMinutes*60000;
@@ -131,6 +131,24 @@ export function heatingSummary({store,ha,gasBudget},now=Date.now(),config=store.
   }else{
     emergencyMemory.clear();
   }
+  if(config.thermostat?.mode==='active'&&data.smartPlan){
+    const overrides=new Map(rooms.filter(room=>room.radiatorEntity&&room.radiatorOverride?.until>now).map(room=>[room.id,room.radiatorOverride]));
+    let applied=false;
+    data.rooms=data.rooms.map(room=>{
+      const override=overrides.get(room.id);
+      if(!override)return room;
+      const paused=room.budgetPaused?'Gas budget paused':!room.fresh?'Waiting for room temperature':emergencyMemory.has(room.id)||room.current<7?'Frost protection':override.opening>0&&room.current>=28?'Room at 28°C limit':null;
+      const updated={...room,radiatorOverride:{...override,paused},scheduledOpening:requestedOpening(room)};
+      if(paused)return updated;
+      applied=true;
+      return {...updated,callingForHeat:override.opening>0,coasting:false};
+    });
+    if(applied){
+      data.smartPlan={...smartThermostatPlan(data.rooms,config.heatingPlan,live?ha.states:[],now),planningOnly:false};
+      data.controlRoomId=data.smartPlan.leadRoomId;
+      data.demandingRoomCount=data.rooms.filter(room=>room.callingForHeat&&!room.budgetPaused).length;
+    }
+  }
   return data;
 }
 export const heatingModule = {
@@ -151,14 +169,15 @@ export const heatingModule = {
     route('GET','/api/heating/control',()=>context.thermostat.status());
     route('POST','/api/heating/control',({body})=>{if(!body||Object.keys(body).some(k=>k!=='mode'))throw new HttpError(400,'Choose only the thermostat mode.');return context.thermostat.setMode(body.mode);});
     route('GET','/api/heating',()=>{
-      const data=heatingSummary(context),control=context.thermostat.status();
+      const now=Date.now(),data=heatingSummary(context,now),control=context.thermostat.status(now,data);
       const trends=context.heatingHistory.trends(data.rooms);
       return {...data,outlook:context.heatingOutlook.read().summary,control,
        valveControlEnabled:control.active?control.ready:data.plan?.settings.version!==2&&data.rooms.some(room=>room.radiatorEntity&&room.radiatorMode&&room.radiatorMode!=='monitor'),
-       rooms:data.rooms.map(room=>({...room,trend:trends[room.id],radiatorControl:room.radiator?context.radiators.status(room.id):null,valvePlan:room.radiator?valvePlan(room):null})),
+       rooms:data.rooms.map(room=>({...room,trend:trends[room.id],radiatorControl:room.radiator?context.radiators.status(room.id):null,valvePlan:control.valves.find(valve=>valve.roomId===room.id) || null})),
        controller:{message:control.active?control.reason:'Planning only; Local PID controls the boiler and radiator settings stay unchanged.'}};
     });
     route('POST','/api/heating/radiator',({body})=>{if(Object.keys(body).some(k=>!['roomId','mode'].includes(k)))throw new HttpError(400,'Only a room and radiator mode are supported.');return context.radiators.setMode(body.roomId,body.mode);});
+    route('POST','/api/heating/radiator/override',({body})=>context.thermostat.setValveOverride(body));
     route('GET','/api/heating/history',({url})=>context.heatingHistory.chart(Number(url.searchParams.get('minutes') || 1440)));
     route('GET','/api/heating/insights',()=>context.heatingHistory.insights());
     route('GET','/api/heating/analysis',()=>({...context.heatingHistory.analysis(),outlook:context.heatingOutlook.read()}));

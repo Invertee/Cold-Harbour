@@ -59,14 +59,33 @@ export function createHeatingHistory(context,summary){
    const heating=t.heating_sample_valid===true&&t.ch_active===true&&t.dhw_active===false&&t.boiler_fault===false&&t.opentherm_age_s<90;
    const snapshot={houseTarget:data.plan?.activeTarget ?? null,activeTarget:data.plan?.scheduledTarget ?? data.plan?.activeTarget ?? null,activity:data.plan?.profile.name || data.activity,occupancy:data.plan?.occupancy.effective || 'unknown',heating,
     boiler:{planned_flow_c:data.smartPlan&&data.smartPlan.kind!=='unavailable'?data.smartPlan.flowC:null,outdoor_c:data.smartPlan?.weather.outdoor?.temperature ?? null,outdoor_at:data.smartPlan?.weather.outdoor?.at || null,outdoor_entity:data.smartPlan?.weather.outdoor?.entityId || null,outdoor_kind:data.smartPlan?.weather.outdoor?'reported':null,flow_c:t.heating_sample_valid===true?(t.ch_flow_c ?? t.flow_c ?? null):null,return_c:t.heating_sample_valid===true?(t.ch_return_c ?? t.return_c ?? null):null,weather_status:data.smartPlan?.weather.status || null,planned_reason:data.smartPlan?.reason || null,requested_flow_c:t.requested_flow_c ?? null,modulation_pct:t.modulation_pct ?? null,flame,pid_output_pct:Number.isFinite(t.pid_output)?t.pid_output*100:null,pid_target_c:t.pid_target_c ?? null,pid_temperature_c:t.pid_temperature_c ?? null,thermal_context:t.opentherm_age_s<90?t.thermal_context || 'unknown':'unknown'},
-    rooms:data.rooms.map(({id,current,target,priority,sourceAt,sensorFingerprint,radiator,radiatorMode,...room})=>({id,current,target,priority,sourceAt,sensorFingerprint,...(radiator?{radiatorEntity:radiator.entityId,radiatorMode:radiatorMode || 'monitor',radiatorTarget:radiator.currentTarget,plannedOpening:valvePlan({...room,id,current,target,priority,radiator}).opening,radiatorReportedOpening:context.ha?.valveContext?.(radiator.entityId,now)?.opening?.value ?? null,radiatorPaused:context.ha?.valveContext?.(radiator.entityId,now)?.opening?.value===0||radiator.mode==='off'||data.plan?.settings.version!==2&&radiatorMode==='pause'}:{})}))};
+    rooms:data.rooms.map(room=>{
+     const {id,current,target,priority,sourceAt,sensorFingerprint,radiator,radiatorMode}=room;
+     const reading={id,current,target,priority,sourceAt,sensorFingerprint};
+     if(!radiator)return reading;
+     const valve=context.ha?.valveContext?.(radiator.entityId,now)?.opening;
+     const reportedOpening=valve?.enabled?valve.value:null;
+     return {...reading,radiatorEntity:radiator.entityId,radiatorMode:radiatorMode || 'monitor',radiatorTarget:radiator.currentTarget,
+      plannedOpening:valvePlan(room).opening,radiatorReportedOpening:reportedOpening,
+      radiatorPaused:reportedOpening===0||radiator.mode==='off'||data.plan?.settings.version!==2&&radiatorMode==='pause'};
+    })};
    store.db.prepare('INSERT INTO heating_samples VALUES (?,?)').run(at,JSON.stringify(snapshot));
    store.db.prepare('DELETE FROM heating_samples WHERE at IN (SELECT at FROM heating_samples ORDER BY at DESC LIMIT -1 OFFSET 129600)').run();
   },
   chart(minutes=1440,now=Date.now()){
    if(![60,360,1440,10080].includes(minutes))throw new HttpError(400,'Choose 1 hour, 6 hours, 24 hours or 7 days.');
    const start=new Date(now-minutes*60000).toISOString(),end=new Date(now).toISOString(),samples=read(now-minutes*60000,now);
-   const points=samples.map(s=>{const row={at:s.at,house_target_c:s.houseTarget,active_target_c:s.activeTarget,activity:s.activity,occupancy:s.occupancy,...s.boiler};for(const r of s.rooms){row[`room_${r.id}`]=r.current;row[`target_${r.id}`]=r.target;row[`priority_${r.id}`]=r.priority ?? null;row[`valve_${r.id}`]=r.plannedOpening ?? null;}return row;});
+   const points=samples.map(sample=>{
+    const row={at:sample.at,house_target_c:sample.houseTarget,active_target_c:sample.activeTarget,activity:sample.activity,occupancy:sample.occupancy,...sample.boiler};
+    for(const r of sample.rooms){
+     row[`room_${r.id}`]=r.current;
+     row[`target_${r.id}`]=r.target;
+     row[`priority_${r.id}`]=r.priority ?? null;
+     row[`valve_${r.id}`]=r.plannedOpening ?? null;
+     row[`valve_reported_${r.id}`]=r.radiatorReportedOpening ?? null;
+    }
+    return row;
+   });
    return {start,end,points,rooms:store.list('rooms').map(({id,name})=>({id,name})),phaseBands:phaseBands(points,end),resolution:'One-minute observations · collection starts with this update'};
   },
   learning(now=Date.now()){

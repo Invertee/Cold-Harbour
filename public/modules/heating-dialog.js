@@ -5,7 +5,7 @@ import {mountHeatingAnalysis} from './heating-analysis.js';
 const tabs=[['plan','Heating plan'],['observations','Observations'],['weather','Weather planning'],['forecast','Forecast']];
 
 export function heatingDialogMarkup(selected='plan'){
- return `<div class="heating-workspace"><h2>Heating</h2><div class="heating-workspace-tabs" role="tablist" aria-label="Heating planning">${tabs.map(([id,label])=>`<button type="button" role="tab" id="heating-tab-${id}" aria-controls="heating-panel-${id}" aria-selected="${selected===id}" tabindex="${selected===id?0:-1}" data-heating-tab="${id}">${esc(label)}</button>`).join('')}</div><p class="field-help heating-draft-note">Switch tabs freely. Save heating plan applies schedule, gas budget and weather changes together.</p>${tabs.map(([id])=>`<section role="tabpanel" id="heating-panel-${id}" aria-labelledby="heating-tab-${id}" tabindex="0" data-heating-panel="${id}" ${selected===id?'':'hidden'}></section>`).join('')}</div>`;
+ return `<div class="heating-workspace"><h2>Heating</h2><div class="heating-workspace-tabs" role="tablist" aria-label="Heating planning">${tabs.map(([id,label])=>`<button type="button" role="tab" id="heating-tab-${id}" aria-controls="heating-panel-${id}" aria-selected="${selected===id}" tabindex="${selected===id?0:-1}" data-heating-tab="${id}">${esc(label)}</button>`).join('')}</div><p class="field-help heating-draft-note">Save applies schedule, gas budget and weather changes together.</p>${tabs.map(([id])=>`<section role="tabpanel" id="heating-panel-${id}" aria-labelledby="heating-tab-${id}" tabindex="0" data-heating-panel="${id}" ${selected===id?'':'hidden'}></section>`).join('')}</div>`;
 }
 
 export async function openHeatingDialog(ctx,{view,tab='plan',focus}={}){

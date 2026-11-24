@@ -55,7 +55,7 @@ test('migration archives individual days, preserves credentials and room mapping
 });
 test('schedule dialog has occupancy tabs and only weekday/weekend rows with distinct periods and priorities',()=>{
  const p=config().heatingPlan,home=scheduleMarkup(p,rooms),away=scheduleMarkup(p,rooms,undefined,'away');
- for(const html of [home,away]){assert.match(html,/Someone home/);assert.match(html,/Everyone away/);assert.equal((html.match(/class="routine-track"/g) || []).length,2);assert.match(html,/Weekdays/);assert.match(html,/Weekends/);assert.doesNotMatch(html,/Individual day|schedule-day|Monday|Sunday/);assert.match(html,/value="high"/);assert.match(html,/value="low"/);assert.match(html,/Save heating plan saves changes across both/);}
+ for(const html of [home,away]){assert.match(html,/Someone home/);assert.match(html,/Everyone away/);assert.equal((html.match(/class="routine-track"/g) || []).length,2);assert.match(html,/Weekdays/);assert.match(html,/Weekends/);assert.doesNotMatch(html,/Individual day|schedule-day|Monday|Sunday/);assert.match(html,/value="high"/);assert.match(html,/value="low"/);assert.match(html,/Save applies both schedules/);}
  assert.match(home,/Home daytime/);assert.doesNotMatch(home.split('<form')[0],/Away morning/);assert.match(away,/Away morning/);assert.match(away,/Away afternoon/);assert.match(away,/1:00 pm/);assert.match(away,/data-schedule-occupancy="away" class="selected" aria-pressed="true"/);
 });
 test('HTTP saves preserve separate occupancy schedules across restarts and still never grant remote authority',async t=>{
@@ -99,7 +99,7 @@ test('new schedule settings validate and the dialog exposes sensor, profile and 
  const saved=validateHeatingPlan(p);assert.equal(saved.activities[0].houseTarget,18.5);assert.deepEqual(saved.scheduleOverride,p.scheduleOverride);
  for(const mutate of [p=>p.activities[0].houseTarget=NaN,p=>p.activities[0].houseTarget=29,p=>p.scheduleOverride.activityId='missing',p=>p.scheduleOverride.entityId='switch.bed',p=>p.scheduleOverride.entityId='']){const bad=structuredClone(p);mutate(bad);assert.throws(()=>validateHeatingPlan(bad),e=>e.status===400);}
  const html=scheduleMarkup(p,rooms,undefined,'home',[{entity_id:'binary_sensor.gone_to_bed',attributes:{friendly_name:'Gone to bed'}}]);
- assert.match(html,/name="periodTarget" value="18.5"/);assert.match(html,/Gone to bed/);assert.match(html,/name="overrideActivity"/);assert.match(html,/overrides both occupancy schedules, every day/);
+ assert.match(html,/name="periodTarget" value="18.5"/);assert.match(html,/Gone to bed/);assert.match(html,/name="overrideActivity"/);assert.match(html,/overrides both schedules while the sensor is on/);
 });
 
 test('forecast guidance uses each period setpoint in hourly targets and daily flow ranges',()=>{

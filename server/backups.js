@@ -26,7 +26,8 @@ function bytes(value,length,label){
   return result;
 }
 function snapshot(store){
-  return {config:store.config(),rooms:store.list('rooms'),rules:store.list('rules'),secrets:{haToken:store.secret('haToken'),boilerKey:store.secret('boilerKey')}};
+  const rooms=store.list('rooms').map(({radiatorOverride,...room})=>room);
+  return {config:store.config(),rooms,rules:store.list('rules'),secrets:{haToken:store.secret('haToken'),boilerKey:store.secret('boilerKey')}};
 }
 
 // Only configuration crosses instances. Host keys, cached readings and history stay local.

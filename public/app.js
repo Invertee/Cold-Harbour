@@ -38,7 +38,7 @@ export async function render({background=false,refresh=false}={}) {
     connectionInterrupted=true;
     if(displayedModule===module.id){
       const notice=document.querySelector('#connection-notice');
-      notice.innerHTML='<span>Updates paused. Showing previously loaded readings; they may be out of date. Retrying automatically.</span><button class="button secondary" id="retry">Try again</button>';notice.hidden=false;
+      notice.innerHTML='<span>Connection lost. Readings may be out of date.</span><button class="button secondary" id="retry">Try again</button>';notice.hidden=false;
     }else{
       displayedModule=null;destroyCharts();main.innerHTML=empty('Unable to load data',`${esc(err.message)} We’ll retry automatically.`,'<button class="button" id="retry">Try again</button>');
     }
@@ -61,7 +61,7 @@ export async function resume(){
 }
 window.addEventListener('hashchange',()=>{render();window.scrollTo({top:0});});
 document.querySelector('.skip-link').onclick=event=>{event.preventDefault();main.focus();main.scrollIntoView();};
-document.querySelector('#refresh').onclick=async event=>{const button=event.currentTarget;button.disabled=true;button.classList.add('spinning');try{await api('refresh',{method:'POST',body:'{}'});await render();toast('Home Assistant refreshed. ESP readings arrive every 30 seconds.');}catch(err){toast(err.message,true);}finally{button.disabled=false;button.classList.remove('spinning');}};
+document.querySelector('#refresh').onclick=async event=>{const button=event.currentTarget;button.disabled=true;button.classList.add('spinning');try{await api('refresh',{method:'POST',body:'{}'});await render();toast('Home Assistant refreshed.');}catch(err){toast(err.message,true);}finally{button.disabled=false;button.classList.remove('spinning');}};
 document.querySelector('#editor').addEventListener('click',event=>{if(event.target===event.currentTarget){const bounds=event.currentTarget.getBoundingClientRect();if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)event.currentTarget.close();}});
 window.addEventListener('unhandledrejection',event=>{toast(event.reason?.message || 'That action could not be completed.',true);event.preventDefault();});
 for(const event of ['focus','pageshow','online'])window.addEventListener(event,()=>void resume());

@@ -1,3 +1,5 @@
+import {sunTargetReduction} from '../public/heating-model.js';
+
 const fresh=(state,now,maxAge)=>{
  const at=Date.parse(state?.last_reported || state?.last_updated);
  return state&&!['unknown','unavailable',''].includes(state.state)&&Number.isFinite(at)&&now-at<=maxAge&&at-now<=60000;
@@ -24,6 +26,6 @@ export function roomSunCompensation(room,target,current,sunlight){
  const status=impact<=0?'disabled':current===null?'room_unavailable':current<7?'frost':sunlight.status;
  // A full slider allows up to 2°C of estimated solar warmth. Keep the
  // scheduled target separate, and never lower the 7°C protection floor.
- const reductionC=status==='current'?Math.min(Math.max(0,target-7),2*impact/100*sunlight.brightness):0;
- return {impact,status,reductionC,heatingTargetC:target-reductionC};
+ const reductionC=status==='current'?sunTargetReduction(target,impact,sunlight.brightness):0;
+ return {impact,status,reductionC,heatingTargetC:target-reductionC,brightness:sunlight.status==='current'?sunlight.brightness:null};
 }

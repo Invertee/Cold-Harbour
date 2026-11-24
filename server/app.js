@@ -112,7 +112,11 @@ export function createApplication({dataDir=process.env.DATA_DIR || resolve('data
       if (table === 'rooms' && value.radiatorEntity) {
         if (store.list('rooms').some(room=>room.id!==value.id && room.radiatorEntity===value.radiatorEntity)) throw new HttpError(400,'This radiator valve is already assigned to another room.');
       }
-      if(table==='rooms'){const previous=store.list('rooms').find(r=>r.id===value.id);value.radiatorMode=previous?.radiatorEntity===value.radiatorEntity?previous?.radiatorMode || 'monitor':'monitor';}
+      if(table==='rooms'){
+        const previous=store.list('rooms').find(r=>r.id===value.id),sameValve=previous?.radiatorEntity===value.radiatorEntity;
+        value.radiatorMode=sameValve?previous?.radiatorMode || 'monitor':'monitor';
+        if(sameValve&&previous?.radiatorOverride?.until>Date.now())value.radiatorOverride=previous.radiatorOverride;
+      }
       const saved = store.put(table,value); store.log('settings',`${table === 'rooms'?'Room':'Schedule'} saved: ${saved.name}`); return saved;
     });
     route('DELETE',`/api/${table}`,({url})=>{const id=url.searchParams.get('id');if(!id)throw new HttpError(400,'Missing ID.');store.remove(table,id);return {ok:true};});

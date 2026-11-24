@@ -11,7 +11,7 @@ export function connection(store) {
 }
 
 export function createHomeAssistant(store, request = fetchJson, registryRequest=readEntityRegistry) {
-  let states = [], fetchedAt = null, error = null, generation = 0,registry=[],registryAt=0,registryAttempt=0,registryError=null,captureBusy=false,temperatureUnit=null,unitsAt=0,polling=null;
+  let states = [], fetchedAt = null, error = null, generation = 0,stateRevision=0,registry=[],registryAt=0,registryAttempt=0,registryError=null,captureBusy=false,temperatureUnit=null,unitsAt=0,polling=null;
   const forecasts=createWeatherForecasts({request,source:()=>{
     const weather=store.config().heatingPlan.weather,{url,token}=connection(store),entityId=weather.forecastEntityId || (weather.entityId?.startsWith('weather.')?weather.entityId:'');
     return {url,token,entityId,enabled:weather.enabled,generation,unit:states.find(s=>s.entity_id===entityId)?.attributes?.temperature_unit || temperatureUnit,connected:Boolean(fetchedAt)&&!error&&Date.now()-Date.parse(fetchedAt)<=45000};
@@ -21,6 +21,7 @@ export function createHomeAssistant(store, request = fetchJson, registryRequest=
     get states() { return states; },
     get temperatureUnit(){return temperatureUnit;},
     get generation(){return generation;},
+    get stateRevision(){return stateRevision;},
     get forecasts(){return forecasts.status();},
     async pollForecasts(now=Date.now()){await forecasts.poll(now);},
     invalidate() { generation++;polling=null; forecasts.clear();states = []; fetchedAt = null; error = null;registry=[];registryAt=registryAttempt=0;registryError=null;temperatureUnit=null;unitsAt=0;this.presenceMemory?.clear();this.demandMemory?.clear();this.budgetEmergencyMemory?.clear();this.occupancyMemory={}; },
@@ -41,7 +42,7 @@ export function createHomeAssistant(store, request = fetchJson, registryRequest=
         }
         if (version !== generation) return;
         if (!Array.isArray(result)) throw new Error('Home Assistant returned invalid entity data.');
-        states = result; fetchedAt = new Date().toISOString(); error = null;
+        states = result; fetchedAt = new Date().toISOString(); stateRevision++; error = null;
         const extras=[];
         if(result.some(s=>/^(climate|weather)\./.test(s.entity_id)&&!['°C','°F'].includes(s.attributes?.temperature_unit || s.attributes?.unit_of_measurement))&&Date.now()-unitsAt>=60000){
           unitsAt=Date.now();

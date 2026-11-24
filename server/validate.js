@@ -121,7 +121,7 @@ export function validateRoom(input) {
   if(Object.keys(control).some(key=>!Object.hasOwn(defaultRoomControl,key)))fail('Unknown room heating control.');
   room.heatControl={startBelow:num(control.startBelow,'Reopen shortfall',0,3),stopBelow:num(control.stopBelow,'Coast before target',0,1.5),fullOpenBelow:num(control.fullOpenBelow,'Full opening shortfall',0.1,6),minOpening:num(control.minOpening,'Minimum valve opening',5,100),maxOpening:num(control.maxOpening,'Maximum valve opening',5,100),openingMode:control.openingMode,fixedOpening:num(control.fixedOpening,'Fixed valve opening',5,100)};
   if(control.startBelow<=control.stopBelow)fail('Reopen shortfall must be greater than the coast setting.');
-  if(control.fullOpenBelow<=control.stopBelow)fail('Full opening shortfall must be greater than the coast setting.');
+  if(control.openingMode==='proportional'&&control.fullOpenBelow<=control.stopBelow)fail('Full opening shortfall must be greater than the coast setting.');
   if(!['proportional','fixed'].includes(control.openingMode))fail('Choose proportional or fixed valve opening.');
   if(control.minOpening>control.maxOpening)fail('Maximum valve opening must be at least the minimum opening.');
   if([control.minOpening,control.maxOpening,control.fixedOpening].some(n=>!Number.isInteger(n)||n%5))fail('Valve openings must use 5% steps.');

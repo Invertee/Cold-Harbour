@@ -1,5 +1,16 @@
 # Release notes
 
+## 0.20.0 — 24 November 2026
+
+- Fixed ZHA valve discovery for Adaptive mode registry identifiers. Changed opening requests now reach Home Assistant on the next control cycle, even when the previous request is still awaiting confirmation.
+- Room cards show valve activity, requested opening and the setting reported by Home Assistant. Heating history plots both opening settings.
+- In Active mode, set a temporary valve opening from the room card for 15 minutes to two hours, or resume automatic control early. Frost protection and gas-budget limits take precedence.
+- Shortened interface copy, grouped room devices and sensors in a collapsible section, and added temperature corrections to the Sun impact slider.
+
+## 0.19.2 — 17 November 2026
+
+- Added a configurable emergency room temperature that can override a gas-budget pause.
+
 ## 0.19.1 — 9 November 2026
 
 - Added a three-minute idle period on the ESP when a Cold Harbour lease expires, is released, or control is changed to Local PID after remote operation.
